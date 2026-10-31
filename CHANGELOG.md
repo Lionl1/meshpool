@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Python client (`sdk/python`, standard library only): `Pool.map` / `map_json` run a task
+  over many inputs and return the verified outputs in order; `JobFailed` when a job has no
+  agreed output. Tests run it against a real coordinator and agents.
+
 ## 0.2.0
 
 Fixes from the first review:
