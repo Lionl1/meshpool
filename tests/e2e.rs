@@ -387,3 +387,19 @@ async fn open_long_polls_do_not_hold_up_shutdown() {
     assert!(started.elapsed() < coordinator::SHUTDOWN_GRACE + Duration::from_secs(1));
     poll.abort();
 }
+
+#[tokio::test]
+async fn check_verifies_a_live_pool() {
+    let url = coordinator(fast()).await;
+    for name in ["a", "b"] {
+        honest_agent(&url, name).await;
+    }
+    let report = meshpool::check::check(&Client::new(&url, None), 12, 20_000, 2)
+        .await
+        .unwrap();
+    // Every job ran on both devices; nobody was struck.
+    assert_eq!(report.votes.values().sum::<usize>(), 24);
+    assert!(report.agents.iter().all(|a| a.strikes == 0));
+    let text = report.to_string();
+    assert!(text.contains("every answer right") && text.contains(" a "));
+}

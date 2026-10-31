@@ -1,0 +1,59 @@
+# Devices on three separate networks with their own latency and loss, one coordinator that
+# all of them reach (like a public host). Each device has its own address, so the
+# coordinator's per-address rules stay on, as on the internet.
+#
+#   docker compose -f deploy/netsim/docker-compose.yml up -d --build
+#   docker compose -f deploy/netsim/docker-compose.yml run --rm check            # 64 jobs × 2
+#   docker compose -f deploy/netsim/docker-compose.yml stop office               # a device leaves
+#   docker compose -f deploy/netsim/docker-compose.yml restart coordinator       # state survives
+#   docker compose -f deploy/netsim/docker-compose.yml down -v
+
+x-device: &device
+  image: meshpool:netsim
+  cap_add: [NET_ADMIN]              # for tc netem inside the container only
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - >-
+      tc qdisc add dev eth0 root netem delay $${DELAY} $${JITTER} loss $${LOSS} &&
+      exec meshpool agent --name $${NAME} --slots 2
+  environment: &device-env
+    MESHPOOL_URL: http://coordinator:7700
+  depends_on: [coordinator]
+  restart: unless-stopped
+
+services:
+  coordinator:
+    image: meshpool:netsim
+    build: {context: ../.., dockerfile: Dockerfile}
+    command: [coordinator, --listen, "0.0.0.0:7700", --data-dir, /data, --agent-timeout, "10"]
+    volumes: [pool:/data]
+    networks: [home, mobile, office]
+
+  home:                             # home Wi-Fi: a little latency, rare loss
+    <<: *device
+    environment: {<<: *device-env, NAME: home, DELAY: 15ms, JITTER: 5ms, LOSS: 0.1%}
+    networks: [home]
+
+  mobile:                           # mobile data: high latency, jitter, loss
+    <<: *device
+    environment: {<<: *device-env, NAME: mobile, DELAY: 80ms, JITTER: 30ms, LOSS: 2%}
+    networks: [mobile]
+
+  office:                           # far away: high latency, stable
+    <<: *device
+    environment: {<<: *device-env, NAME: office, DELAY: 120ms, JITTER: 2ms, LOSS: 0%}
+    networks: [office]
+
+  check:
+    image: meshpool:netsim
+    command: [--url, "http://coordinator:7700", check, --tasks, "64", --n, "2000000"]
+    networks: [home]
+    profiles: [check]
+
+networks:
+  home:
+  mobile:
+  office:
+
+volumes:
+  pool:

@@ -1,0 +1,6 @@
+target
+field-test
+.git
+.github
+sdk/python
+**/.venv

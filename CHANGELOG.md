@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Field tests: `meshpool check` runs jobs with known answers on a live pool, fails on a
+  wrong agreed answer and reports per device what it ran; `scripts/field-test.sh` starts a
+  pool with HTTPS, tokens and saved state and prints how devices join; `deploy/netsim`
+  (Docker Compose, `tc netem`) puts devices on separate networks with their own latency and
+  loss. `docs/field-test.md`.
 - Graceful shutdown: on Ctrl-C or SIGTERM the coordinator stops accepting, lets requests
   finish (open long polls are cut after `SHUTDOWN_GRACE`, 2 s) and saves its state one
   last time. Library: `coordinator::serve_until(listener, cfg, tls, shutdown)`.
