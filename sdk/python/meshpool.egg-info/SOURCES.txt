@@ -1,8 +1,0 @@
-pyproject.toml
-meshpool/__init__.py
-meshpool/client.py
-meshpool.egg-info/PKG-INFO
-meshpool.egg-info/SOURCES.txt
-meshpool.egg-info/dependency_links.txt
-meshpool.egg-info/top_level.txt
-tests/test_pool.py

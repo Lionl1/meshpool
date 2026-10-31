@@ -1,7 +1,0 @@
-Metadata-Version: 2.4
-Name: meshpool
-Version: 0.1.0
-Summary: Python client for meshpool: run WebAssembly tasks on a pool of untrusted devices
-License-Expression: MIT
-Requires-Python: >=3.9
-Description-Content-Type: text/markdown
