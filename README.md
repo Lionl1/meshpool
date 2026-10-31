@@ -29,6 +29,14 @@ Tokens: `MESHPOOL_TOKEN` for clients, `MESHPOOL_AGENT_TOKEN` to restrict who may
 Replicas of a job go to devices with distinct IP addresses; to try a pool on one machine,
 start the coordinator with `--allow-same-ip`.
 
+From Python, with the [client](sdk/python) (standard library only):
+
+```python
+from meshpool import Pool
+pool = Pool("http://coordinator:7700")
+outputs = pool.map(pool.upload("my_task.wasm"), [b"a", b"b", b"c"])
+```
+
 ## Writing a task
 
 In Rust, with the [SDK](sdk/rust): write an ordinary function and mark it as the task.
