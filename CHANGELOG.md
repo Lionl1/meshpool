@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Rust task SDK (`sdk/rust`, crate `meshpool-task`): `task!` turns `fn(&[u8]) -> impl
+  AsRef<[u8]>` into a task, `task_json!` does the same for serde types. Examples: primes,
+  word count, Mandelbrot strips; tests build them to wasm32 and run them in a pool.
+
 ## 0.2.0
 
 Fixes from the first review:
