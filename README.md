@@ -29,6 +29,14 @@ Tokens: `MESHPOOL_TOKEN` for clients, `MESHPOOL_AGENT_TOKEN` to restrict who may
 Replicas of a job go to devices with distinct IP addresses; to try a pool on one machine,
 start the coordinator with `--allow-same-ip`.
 
+From Python, with the [client](sdk/python) (standard library only):
+
+```python
+from meshpool import Pool
+pool = Pool("http://coordinator:7700")
+outputs = pool.map(pool.upload("my_task.wasm"), [b"a", b"b", b"c"])
+```
+
 ### HTTPS
 
 Device secrets and tokens travel with every request, so outside a trusted LAN serve the
@@ -46,9 +54,33 @@ The coordinator warns when it serves plain HTTP on a non-loopback address.
 
 ## Writing a task
 
-A task is a WASM module exporting `memory` and `run()`, with three host functions in
-module `env`: `input_len() -> i32`, `read_input(ptr)`, `write_output(ptr, len)`.
-See [examples/tasks](examples/tasks). Any language that compiles to `wasm32` works.
+In Rust, with the [SDK](sdk/rust): write an ordinary function and mark it as the task.
+
+```rust
+// Cargo.toml: crate-type = ["cdylib"], meshpool-task = { path = ".../sdk/rust" }
+fn reverse(input: &[u8]) -> Vec<u8> {
+    input.iter().rev().copied().collect()
+}
+meshpool_task::task!(reverse);
+// or, with feature "json": fn f(x: In) -> Out, both serde types
+// meshpool_task::task_json!(f);
+```
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo build --release --target wasm32-unknown-unknown
+meshpool submit target/wasm32-unknown-unknown/release/my_task.wasm --input "hello"
+```
+
+On the host the same functions are plain Rust, so unit tests need no pool. Tasks must be
+deterministic (replicas compare outputs bit for bit): iterate `BTreeMap`s rather than
+`HashMap`s and derive any randomness from the input; floats are fine. Examples:
+[primes, word count (JSON), Mandelbrot strips](sdk/rust/examples).
+
+Under the hood a task is a WASM module exporting `memory` and `run()`, with three host
+functions in module `env`: `input_len() -> i32`, `read_input(ptr)`, `write_output(ptr, len)`.
+Any language that compiles to `wasm32` can implement it; see the hand-written
+[examples/tasks](examples/tasks).
 
 ## Docs
 

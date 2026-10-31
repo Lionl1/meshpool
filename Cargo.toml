@@ -20,5 +20,8 @@ uuid = { version = "1", features = ["v4"] }
 wasmtime = "50"
 wat = "1"
 
+[workspace]
+members = ["sdk/rust"]
+
 [dev-dependencies]
 rcgen = "0.14.10"
