@@ -1,0 +1,33 @@
+[package]
+name = "meshpool-task"
+version = "0.1.0"
+edition = "2024"
+description = "Write meshpool tasks as ordinary Rust functions"
+license = "MIT"
+
+[features]
+json = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+serde = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+
+# Examples build to task modules: cargo build --release --target wasm32-unknown-unknown --example primes
+[[example]]
+name = "primes"
+crate-type = ["cdylib"]
+test = true
+
+[[example]]
+name = "wordcount"
+crate-type = ["cdylib"]
+test = true
+required-features = ["json"]
+
+[[example]]
+name = "mandelbrot"
+crate-type = ["cdylib"]
+test = true

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rust task SDK (`sdk/rust`, crate `meshpool-task`): `task!` turns `fn(&[u8]) -> impl
+  AsRef<[u8]>` into a task, `task_json!` does the same for serde types. Examples: primes,
+  word count, Mandelbrot strips; tests build them to wasm32 and run them in a pool.
 - Python client (`sdk/python`, standard library only): `Pool.map` / `map_json` run a task
   over many inputs and return the verified outputs in order; `JobFailed` when a job has no
   agreed output. Tests run it against a real coordinator and agents.
