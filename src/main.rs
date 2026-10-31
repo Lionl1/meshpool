@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use meshpool::agent::Agent;
 use meshpool::client::Client;
 use meshpool::coordinator::{self, Config};
-use meshpool::proto::JobSpec;
+use meshpool::proto::{Caps, JobSpec};
 
 #[derive(Parser)]
 #[command(version, about = "Pool the compute of untrusted devices")]
@@ -39,17 +39,26 @@ enum Command {
         agent_token: Option<String>,
         #[arg(long, default_value_t = 30.0)]
         agent_timeout: f64,
-        #[arg(long, default_value_t = 300.0)]
+        /// Seconds a lease survives without being renewed by the device's heartbeats.
+        #[arg(long, default_value_t = 60.0)]
         lease_timeout: f64,
+        /// Let devices on one IP address take replicas of the same job and do not ban
+        /// addresses (for a pool on one machine or one LAN behind a single address).
+        #[arg(long)]
+        allow_same_ip: bool,
     },
     /// Lend this device to the pool.
     Agent {
-        #[arg(long, default_value_t = hostname())]
-        name: String,
+        /// Default: the host name.
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long, env = "MESHPOOL_AGENT_TOKEN")]
         token: Option<String>,
         #[arg(long, default_value_t = 10.0)]
         heartbeat: f64,
+        /// Tasks to run at once (default: one per CPU core).
+        #[arg(long)]
+        slots: Option<u32>,
     },
     /// Run a WebAssembly task (.wasm or .wat) and print its output.
     Submit {
@@ -108,6 +117,7 @@ async fn main() -> Result<()> {
             agent_token,
             agent_timeout,
             lease_timeout,
+            allow_same_ip,
         } => {
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             eprintln!("[*] coordinator on http://{}", listener.local_addr()?);
@@ -121,6 +131,7 @@ async fn main() -> Result<()> {
                 agent_token,
                 agent_timeout: Duration::from_secs_f64(agent_timeout),
                 lease_timeout: Duration::from_secs_f64(lease_timeout),
+                distinct_ips: !allow_same_ip,
             };
             coordinator::serve(listener, cfg).await
         }
@@ -128,11 +139,13 @@ async fn main() -> Result<()> {
             name,
             token,
             heartbeat,
+            slots,
         } => {
             let agent = Agent::connect(
                 Client::new(&cli.url, token),
-                &name,
+                &name.unwrap_or_else(hostname),
                 Duration::from_secs_f64(heartbeat),
+                slots.unwrap_or_else(|| Caps::detect().cpus),
             )
             .await?;
             agent.run().await

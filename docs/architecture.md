@@ -22,14 +22,22 @@ Three parties, none trusting the others more than necessary:
 | A task harms the device that runs it | Tasks are WebAssembly modules run by wasmtime: no files, network, clock or randomness; memory and CPU (fuel) are capped |
 | A device returns a wrong result (bug, overclock, cheating) | Every task runs on several devices (replicas); a result is accepted only when a quorum of them agree bit for bit; dissenters get strikes and are banned after 3 |
 | A device impersonates another one | Each device gets a secret at registration; every agent call carries it |
+| A device sheds a ban by registering again | Strikes also count per IP address: once an address has 3, all its devices are banned and it cannot register new ones |
 | A device reads the task's data | **Not defended**: contributed devices see their inputs. Confidential workloads need TEEs (later) or trusted pools |
-| One person runs many devices (Sybil) to win the quorum | Partly: replicas go to distinct devices only. Later: reputation weighting, random assignment, owner identity/stake |
+| One person runs many devices (Sybil) to win the quorum | Partly: replicas of a job go to distinct devices *and distinct IP addresses*. Later: reputation weighting, random assignment, owner identity/stake |
+| Someone uses the coordinator as free storage | Only clients upload blobs; a device can upload just the output of a task it holds, at most 64 MiB, and unreferenced blobs expire |
+
+The per-address rules (`distinct_ips`, on by default) assume devices reach the coordinator
+directly. For a pool on one machine or behind one NAT address, start the coordinator with
+`--allow-same-ip`.
 
 Bitwise agreement needs determinism, so the sandbox is configured for it: NaNs are
-canonicalised, relaxed SIMD and threads are off, and all limits (fuel, memory) come from the
-job, not from the device. Even failures are voted on: "ran out of fuel" or "trapped" is a
-result the replicas must agree on. Fuel used is part of the vote too, which makes it a
-verifiable cost unit for credits.
+canonicalised, relaxed SIMD and threads are off, and all limits (fuel, memory, tables) come
+from the job or are fixed, never from the device. Even failures are voted on: "ran out of
+fuel" or "trapped" is a result the replicas must agree on. Fuel used is part of every vote,
+which makes it a verifiable cost unit for credits. Problems of the device itself (it cannot
+fetch a blob or allocate an instance) are not votes: the task goes back to the queue and
+nobody is blamed.
 
 ## Components
 
@@ -40,10 +48,13 @@ verifiable cost unit for credits.
 
 - **Coordinator** (`src/coordinator.rs`): job queue, task leases, quorum, strikes and
   credits, content-addressed blob store (SHA-256). One process with state in memory for now.
-- **Agent** (`src/agent.rs`): registers the device and its capabilities, heartbeats,
-  long-polls for a lease, fetches module and input by hash (verified, modules cached),
-  runs them in the sandbox, uploads the output and reports the outcome. Agents only make
-  outbound requests, so they work behind any NAT or firewall.
+- **Agent** (`src/agent.rs`): registers the device and its capabilities, runs `slots`
+  tasks at once (one per core by default), leases as many tasks as it has free slots in one
+  long-poll, fetches module and input by hash (verified; modules and small inputs cached),
+  runs them in the sandbox and reports the output in the same request as the vote. A slot is
+  freed before the report goes out, so on a slow network the next task overlaps it.
+  Heartbeats renew the leases of running tasks. Agents only make outbound requests, so
+  they work behind any NAT or firewall.
 - **Sandbox** (`src/sandbox.rs`): wasmtime with fuel, memory limits and a three-function
   host ABI (`env.input_len`, `env.read_input`, `env.write_output`; the module exports
   `memory` and `run`).
@@ -61,7 +72,15 @@ verifiable cost unit for credits.
 4. As soon as ⌊R/2⌋+1 votes agree, the job is done; agreeing devices earn credits (fuel),
    dissenting ones get a strike. If all replicas have voted without a quorum, one more
    replica is added (up to R+2), then the job fails with "no consensus".
-5. A lease that is not answered in time, or whose device stops heartbeating, is re-queued.
+5. A lease lives as long as its device's heartbeats renew it, so tasks may run for hours.
+   If the device goes silent, or keeps beating without renewing the lease (it hangs), the
+   task is re-queued; the same device may take it again, so small pools do not stall.
+6. Decided jobs are kept for an hour, then forgotten with their tasks; blobs no job refers
+   to expire after an hour; devices silent for a day are forgotten (their address keeps
+   its strikes).
+
+Clients submit many jobs in one request (`POST /v1/jobs/batch`) and long-poll each job;
+only that job's decision wakes the request.
 
 ## Roadmap
 

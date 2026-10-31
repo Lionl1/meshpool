@@ -18,7 +18,7 @@ GPU via WebGPU is next.
 ```bash
 cargo build --release
 ./target/release/meshpool coordinator                 # on a reachable machine
-./target/release/meshpool agent                       # on every device (MESHPOOL_URL=...)
+./target/release/meshpool agent                       # on every device (MESHPOOL_URL=...), one task per core
 ./target/release/meshpool submit examples/tasks/reverse.wat --input "hello, pool"
 ./target/release/meshpool agents                      # devices, strikes, credits
 ```
@@ -26,6 +26,8 @@ cargo build --release
 `submit` uploads the module and input, waits for the agreed result and prints it.
 Options: `--replicas` (default 2), `--fuel`, `--memory-mb`, `--input-file`, `--detach`.
 Tokens: `MESHPOOL_TOKEN` for clients, `MESHPOOL_AGENT_TOKEN` to restrict who may join.
+Replicas of a job go to devices with distinct IP addresses; to try a pool on one machine,
+start the coordinator with `--allow-same-ip`.
 
 ## Writing a task
 
@@ -37,6 +39,7 @@ See [examples/tasks](examples/tasks). Any language that compiles to `wasm32` wor
 
 - [Architecture, trust model, roadmap](docs/architecture.md)
 - [Benchmarks vs Ray and Dask](docs/benchmarks.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

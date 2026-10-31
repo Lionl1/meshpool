@@ -58,10 +58,19 @@ def count_primes(n: int) -> int:
     return sum(sieve)
 
 
-def workload(kind: str, n: int):
-    if kind == "primes":
-        return "primes.wat", struct.pack("<I", n), struct.pack("<I", count_primes(n))
-    return "reverse.wat", b"0123456789abcdef", b"fedcba9876543210"
+def workload(args):
+    """Module name and (input, expected output) per task, as examples/bench.rs builds them."""
+    if args.kind == "primes":
+        io = (struct.pack("<I", args.n), struct.pack("<I", count_primes(args.n)))
+        return "primes.wat", [io] * args.tasks
+    if args.kind == "data":
+        size = args.mb << 20
+        tasks = []
+        for i in range(args.tasks):
+            data = bytes((i * 31 + j * 7) & 0xFF for j in range(size))
+            tasks.append((data, data[::-1]))
+        return "reverse.wat", tasks
+    return "reverse.wat", [(b"0123456789abcdef", b"fedcba9876543210")] * args.tasks
 
 
 def kill_later(delay: float, pick_pid):
@@ -75,7 +84,7 @@ def kill_later(delay: float, pick_pid):
     threading.Thread(target=go, daemon=True).start()
 
 
-def bench_ray(args, name, data):
+def bench_ray(args, name, inputs):
     import psutil
     import ray
 
@@ -91,13 +100,13 @@ def bench_ray(args, name, data):
     start = time.perf_counter()
     if args.kill_after:
         kill_later(args.kill_after, busy_worker)
-    results = ray.get([task.remote(name, data) for _ in range(args.tasks)])
+    results = ray.get([task.remote(name, data) for data in inputs])
     secs = time.perf_counter() - start
     ray.shutdown()
     return results, secs
 
 
-def bench_dask(args, name, data):
+def bench_dask(args, name, inputs):
     from dask.distributed import Client, LocalCluster
 
     cluster = LocalCluster(n_workers=args.workers, threads_per_worker=1, processes=True, dashboard_address=None)
@@ -107,7 +116,7 @@ def bench_dask(args, name, data):
     start = time.perf_counter()
     if args.kill_after:
         kill_later(args.kill_after, lambda: pids[0])
-    futures = client.map(run_wasm, [name] * args.tasks, [data] * args.tasks, pure=False, retries=3)
+    futures = client.map(run_wasm, [name] * len(inputs), inputs, pure=False, retries=3)
     results = client.gather(futures)
     secs = time.perf_counter() - start
     client.close()
@@ -118,15 +127,17 @@ def bench_dask(args, name, data):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--system", choices=["ray", "dask"], required=True)
-    p.add_argument("--kind", default="noop", choices=["noop", "primes"])
+    p.add_argument("--kind", default="noop", choices=["noop", "primes", "data"])
+    p.add_argument("--mb", type=int, default=4, help="input MiB per task (kind=data)")
     p.add_argument("--tasks", type=int, default=1000)
     p.add_argument("--n", type=int, default=2_000_000)
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--kill-after", type=float, default=0.0, help="SIGKILL one worker after N seconds")
     args = p.parse_args()
-    name, data, expected = workload(args.kind, args.n)
-    results, secs = (bench_ray if args.system == "ray" else bench_dask)(args, name, data)
-    ok = sum(r == expected for r in results)
+    name, tasks = workload(args)
+    inputs = [data for data, _ in tasks]
+    results, secs = (bench_ray if args.system == "ray" else bench_dask)(args, name, inputs)
+    ok = sum(r == expected for r, (_, expected) in zip(results, tasks))
     print(json.dumps({
         "system": args.system, "kind": args.kind, "tasks": args.tasks, "killed": bool(args.kill_after),
         "ok": ok, "seconds": round(secs, 3), "tasks_per_s": round(args.tasks / secs, 1),

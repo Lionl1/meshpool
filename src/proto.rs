@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 /// Bumped when agents and coordinators can no longer talk to each other. Fuel accounting
 /// depends on the wasmtime version, so it is part of it: replicas must count fuel alike.
-pub const PROTOCOL: &str = "meshpool/0.1+wasmtime50";
+pub const PROTOCOL: &str = "meshpool/0.2+wasmtime50";
 
 pub fn blob_hash(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
@@ -55,6 +55,7 @@ pub enum Outcome {
     },
     Failed {
         kind: FailKind,
+        fuel_used: u64,
         detail: String,
     },
     /// The device could not run the task (fetch failed, shutting down): re-queued, no vote.
@@ -65,10 +66,21 @@ pub enum Outcome {
 
 impl Outcome {
     /// What replicas must agree on; None for an abandoned task.
+    /// Fuel the task burned on the device (what agreeing devices are credited).
+    pub fn fuel_used(&self) -> u64 {
+        match self {
+            Outcome::Ok { fuel_used, .. } | Outcome::Failed { fuel_used, .. } => *fuel_used,
+            Outcome::Abandoned { .. } => 0,
+        }
+    }
+
     pub fn vote(&self) -> Option<String> {
         match self {
             Outcome::Ok { output, fuel_used } => Some(format!("ok:{output}:{fuel_used}")),
-            Outcome::Failed { kind, .. } => Some(format!("failed:{kind:?}")),
+            // The detail (trap message) is not voted on: it may differ between devices.
+            Outcome::Failed {
+                kind, fuel_used, ..
+            } => Some(format!("failed:{kind:?}:{fuel_used}")),
             Outcome::Abandoned { .. } => None,
         }
     }
@@ -102,6 +114,8 @@ pub struct JobView {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Caps {
     pub cpus: u32,
+    /// Tasks the device runs at once.
+    pub slots: u32,
     pub os: String,
     pub arch: String,
     pub gpus: Vec<String>,
@@ -111,6 +125,7 @@ impl Caps {
     pub fn detect() -> Self {
         Caps {
             cpus: std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
+            slots: 1,
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
             gpus: Vec::new(),
@@ -153,4 +168,11 @@ pub struct AgentView {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Created {
     pub id: String,
+}
+
+/// Sent with every heartbeat: the tasks the device is still working on (their leases are
+/// extended, so a long task is never taken away from a live device).
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Heartbeat {
+    pub tasks: Vec<String>,
 }
