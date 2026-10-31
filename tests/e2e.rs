@@ -17,15 +17,17 @@ async fn coordinator(cfg: Config) -> String {
     url
 }
 
+/// Quick timeouts; every device runs on 127.0.0.1, so the per-address rules are off.
 fn fast() -> Config {
     Config {
         agent_timeout: Duration::from_millis(600),
+        distinct_ips: false,
         ..Config::default()
     }
 }
 
 async fn honest_agent(url: &str, name: &str) {
-    let agent = Agent::connect(Client::new(url, None), name, Duration::from_millis(100))
+    let agent = Agent::connect(Client::new(url, None), name, Duration::from_millis(100), 1)
         .await
         .unwrap();
     tokio::spawn(agent.run());
@@ -37,17 +39,10 @@ async fn lying_agent(url: &str) -> String {
     let auth = client.register("liar", Caps::default()).await.unwrap();
     let id = auth.id.clone();
     tokio::spawn(async move {
-        let lease = client.lease(&auth, WAIT).await.unwrap().unwrap();
-        let output = client.put_blob(b"forged".to_vec()).await.unwrap();
+        let lease = client.lease(&auth, WAIT, 1).await.unwrap().remove(0);
+        let forged = b"forged".to_vec();
         client
-            .report(
-                &auth,
-                &lease.task_id,
-                &Outcome::Ok {
-                    output,
-                    fuel_used: 1,
-                },
-            )
+            .report_output(&auth, &lease.task_id, forged, 1)
             .await
             .unwrap();
     });
@@ -155,7 +150,7 @@ async fn work_of_a_vanished_device_moves_to_another() {
     let client = Client::new(&url, None);
     let ghost = client.register("ghost", Caps::default()).await.unwrap();
     let job = submit(&client, "reverse.wat", b"xy", 1, 1_000_000).await;
-    assert!(client.lease(&ghost, WAIT).await.unwrap().is_some()); // and never heard of again
+    assert_eq!(client.lease(&ghost, WAIT, 1).await.unwrap().len(), 1); // and never heard of again
     honest_agent(&url, "a").await;
     let view = client.wait(&job, WAIT).await.unwrap();
     assert_eq!(client.output(&view).await.unwrap(), b"yx");
@@ -188,6 +183,69 @@ async fn tokens_and_device_secrets_are_enforced() {
     let devices = Client::new(&url, Some("devices".into()));
     let mut auth = devices.register("x", Caps::default()).await.unwrap();
     assert_eq!(status(devices.agents().await), Some(401));
+    // Devices cannot use the coordinator as free storage: uploads are for clients.
+    assert_eq!(status(devices.put_blob(vec![0; 1024]).await), Some(401));
+    let clients = Client::new(&url, Some("client".into()));
+    let hash = clients.put_blob(b"data".to_vec()).await.unwrap();
+    assert_eq!(devices.get_blob_as(&auth, &hash).await.unwrap(), b"data");
+    assert_eq!(status(devices.get_blob(&hash).await), Some(401));
     auth.secret = "stolen-id-wrong-secret".into();
-    assert_eq!(status(devices.heartbeat(&auth).await), Some(401));
+    assert_eq!(status(devices.heartbeat(&auth, vec![]).await), Some(401));
+    assert_eq!(status(devices.get_blob_as(&auth, &hash).await), Some(401));
+}
+
+#[tokio::test]
+async fn a_task_longer_than_the_lease_timeout_stays_with_its_live_device() {
+    let cfg = Config {
+        lease_timeout: Duration::from_millis(150),
+        ..fast()
+    };
+    let url = coordinator(cfg).await;
+    let client = Client::new(&url, None);
+    let n: u32 = 6_000_000; // about a second: several lease timeouts
+    let job = submit(&client, "primes.wat", &n.to_le_bytes(), 1, u64::MAX / 2).await;
+    honest_agent(&url, "a").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    honest_agent(&url, "b").await; // would steal the task if the lease expired
+    let view = client.wait(&job, WAIT).await.unwrap();
+    assert_eq!(view.votes.len(), 1, "the task ran once: {:?}", view.votes);
+    assert_eq!(
+        client.output(&view).await.unwrap(),
+        412_849u32.to_le_bytes()
+    );
+}
+
+#[tokio::test]
+async fn a_multi_slot_device_runs_a_batch_in_parallel() {
+    let url = coordinator(fast()).await;
+    let agent = Agent::connect(
+        Client::new(&url, None),
+        "big",
+        Duration::from_millis(100),
+        4,
+    )
+    .await
+    .unwrap();
+    tokio::spawn(agent.run());
+    let client = Client::new(&url, None);
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/tasks/reverse.wat");
+    let module = client
+        .put_blob(meshpool::load_module(&path).unwrap())
+        .await
+        .unwrap();
+    let mut specs = Vec::new();
+    for i in 0..8u8 {
+        specs.push(JobSpec {
+            module: module.clone(),
+            input: client.put_blob(vec![b'a', b'0' + i]).await.unwrap(),
+            fuel: 1_000_000,
+            memory_mb: 16,
+            replicas: 1,
+        });
+    }
+    let ids = client.submit_batch(&specs).await.unwrap();
+    for (i, id) in ids.iter().enumerate() {
+        let view = client.wait(id, WAIT).await.unwrap();
+        assert_eq!(client.output(&view).await.unwrap(), [b'0' + i as u8, b'a']);
+    }
 }

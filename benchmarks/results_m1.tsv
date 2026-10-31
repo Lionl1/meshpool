@@ -1,0 +1,87 @@
+noop	{"system": "ray", "kind": "noop", "tasks": 1000, "killed": false, "ok": 1000, "seconds": 0.153, "tasks_per_s": 6536.9}
+noop	{"system": "dask", "kind": "noop", "tasks": 1000, "killed": false, "ok": 1000, "seconds": 0.731, "tasks_per_s": 1368.5}
+noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":0.108,"tasks_per_s":9252.9}
+primes	{"system": "ray", "kind": "primes", "tasks": 32, "killed": false, "ok": 32, "seconds": 2.509, "tasks_per_s": 12.8}
+primes	{"system": "dask", "kind": "primes", "tasks": 32, "killed": false, "ok": 32, "seconds": 2.537, "tasks_per_s": 12.6}
+primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.414,"tasks_per_s":13.3}
+kill	{"system": "ray", "kind": "primes", "tasks": 32, "killed": true, "ok": 32, "seconds": 3.195, "tasks_per_s": 10.0}
+kill	{"system": "dask", "kind": "primes", "tasks": 32, "killed": true, "ok": 32, "seconds": 3.157, "tasks_per_s": 10.1}
+kill	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":3.301,"tasks_per_s":9.7}
+data	{"system": "ray", "kind": "data", "tasks": 32, "killed": false, "ok": 32, "seconds": 0.208, "tasks_per_s": 154.2}
+data	{"system": "dask", "kind": "data", "tasks": 32, "killed": false, "ok": 32, "seconds": 0.325, "tasks_per_s": 98.5}
+data	{"system":"meshpool","kind":"data","tasks":32,"replicas":1,"ok":32,"seconds":0.264,"tasks_per_s":121.2}
+full	{"system": "ray", "kind": "primes", "tasks": 64, "killed": false, "ok": 64, "seconds": 4.156, "tasks_per_s": 15.4}
+full	{"system": "dask", "kind": "primes", "tasks": 64, "killed": false, "ok": 64, "seconds": 4.231, "tasks_per_s": 15.1}
+full	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.014,"tasks_per_s":15.9}
+slots1	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":17.968,"tasks_per_s":3.6}
+slots2	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":9.286,"tasks_per_s":6.9}
+slots4	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.835,"tasks_per_s":13.2}
+slots8	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.080,"tasks_per_s":15.7}
+replicas1	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.036,"tasks_per_s":15.7}
+replicas2	{"system":"meshpool","kind":"primes","tasks":32,"replicas":2,"ok":32,"seconds":4.021,"tasks_per_s":8.0}
+replicas3	{"system":"meshpool","kind":"primes","tasks":32,"replicas":3,"ok":32,"seconds":5.988,"tasks_per_s":5.3}
+noop	{"system": "ray", "kind": "noop", "tasks": 1000, "killed": false, "ok": 1000, "seconds": 0.152, "tasks_per_s": 6575.4}
+noop	{"system": "dask", "kind": "noop", "tasks": 1000, "killed": false, "ok": 1000, "seconds": 0.717, "tasks_per_s": 1394.1}
+noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":0.106,"tasks_per_s":9394.2}
+primes	{"system": "ray", "kind": "primes", "tasks": 32, "killed": false, "ok": 32, "seconds": 2.503, "tasks_per_s": 12.8}
+primes	{"system": "dask", "kind": "primes", "tasks": 32, "killed": false, "ok": 32, "seconds": 2.534, "tasks_per_s": 12.6}
+primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.411,"tasks_per_s":13.3}
+kill	{"system": "ray", "kind": "primes", "tasks": 32, "killed": true, "ok": 32, "seconds": 3.205, "tasks_per_s": 10.0}
+kill	{"system": "dask", "kind": "primes", "tasks": 32, "killed": true, "ok": 32, "seconds": 3.139, "tasks_per_s": 10.2}
+kill	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":3.289,"tasks_per_s":9.7}
+data	{"system": "ray", "kind": "data", "tasks": 32, "killed": false, "ok": 32, "seconds": 0.208, "tasks_per_s": 154.0}
+data	{"system": "dask", "kind": "data", "tasks": 32, "killed": false, "ok": 32, "seconds": 0.336, "tasks_per_s": 95.2}
+data	{"system":"meshpool","kind":"data","tasks":32,"replicas":1,"ok":32,"seconds":0.254,"tasks_per_s":126.0}
+full	{"system": "ray", "kind": "primes", "tasks": 64, "killed": false, "ok": 64, "seconds": 4.218, "tasks_per_s": 15.2}
+full	{"system": "dask", "kind": "primes", "tasks": 64, "killed": false, "ok": 64, "seconds": 4.266, "tasks_per_s": 15.0}
+full	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.174,"tasks_per_s":15.3}
+slots1	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":17.960,"tasks_per_s":3.6}
+slots2	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":9.286,"tasks_per_s":6.9}
+slots4	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.817,"tasks_per_s":13.3}
+slots8	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.084,"tasks_per_s":15.7}
+replicas1	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.035,"tasks_per_s":15.7}
+replicas2	{"system":"meshpool","kind":"primes","tasks":32,"replicas":2,"ok":32,"seconds":4.005,"tasks_per_s":8.0}
+replicas3	{"system":"meshpool","kind":"primes","tasks":32,"replicas":3,"ok":32,"seconds":6.060,"tasks_per_s":5.3}
+noop	{"system": "ray", "kind": "noop", "tasks": 1000, "killed": false, "ok": 1000, "seconds": 0.152, "tasks_per_s": 6572.1}
+noop	{"system": "dask", "kind": "noop", "tasks": 1000, "killed": false, "ok": 1000, "seconds": 0.716, "tasks_per_s": 1396.8}
+noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":0.108,"tasks_per_s":9281.7}
+primes	{"system": "ray", "kind": "primes", "tasks": 32, "killed": false, "ok": 32, "seconds": 2.493, "tasks_per_s": 12.8}
+primes	{"system": "dask", "kind": "primes", "tasks": 32, "killed": false, "ok": 32, "seconds": 2.527, "tasks_per_s": 12.7}
+primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.413,"tasks_per_s":13.3}
+kill	{"system": "ray", "kind": "primes", "tasks": 32, "killed": true, "ok": 32, "seconds": 3.194, "tasks_per_s": 10.0}
+kill	{"system": "dask", "kind": "primes", "tasks": 32, "killed": true, "ok": 32, "seconds": 3.137, "tasks_per_s": 10.2}
+kill	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":3.290,"tasks_per_s":9.7}
+data	{"system": "ray", "kind": "data", "tasks": 32, "killed": false, "ok": 32, "seconds": 0.216, "tasks_per_s": 148.1}
+data	{"system": "dask", "kind": "data", "tasks": 32, "killed": false, "ok": 32, "seconds": 0.345, "tasks_per_s": 92.7}
+data	{"system":"meshpool","kind":"data","tasks":32,"replicas":1,"ok":32,"seconds":0.247,"tasks_per_s":129.4}
+full	{"system": "ray", "kind": "primes", "tasks": 64, "killed": false, "ok": 64, "seconds": 4.173, "tasks_per_s": 15.3}
+full	{"system": "dask", "kind": "primes", "tasks": 64, "killed": false, "ok": 64, "seconds": 4.222, "tasks_per_s": 15.2}
+full	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.018,"tasks_per_s":15.9}
+slots1	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":17.952,"tasks_per_s":3.6}
+slots2	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":9.287,"tasks_per_s":6.9}
+slots4	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.822,"tasks_per_s":13.3}
+slots8	{"system":"meshpool","kind":"primes","tasks":64,"replicas":1,"ok":64,"seconds":4.157,"tasks_per_s":15.4}
+replicas1	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.016,"tasks_per_s":15.9}
+replicas2	{"system":"meshpool","kind":"primes","tasks":32,"replicas":2,"ok":32,"seconds":4.071,"tasks_per_s":7.9}
+replicas3	{"system":"meshpool","kind":"primes","tasks":32,"replicas":3,"ok":32,"seconds":6.007,"tasks_per_s":5.3}
+rtt0_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":0.221,"tasks_per_s":4530.2}
+rtt0_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.425,"tasks_per_s":13.2}
+rtt20_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":6.568,"tasks_per_s":152.3}
+rtt20_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.746,"tasks_per_s":11.7}
+rtt60_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":16.836,"tasks_per_s":59.4}
+rtt60_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":3.345,"tasks_per_s":9.6}
+rtt60_noop_32slots	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":4.625,"tasks_per_s":216.2}
+rtt0_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":0.202,"tasks_per_s":4954.3}
+rtt0_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.420,"tasks_per_s":13.2}
+rtt20_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":6.569,"tasks_per_s":152.2}
+rtt20_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.750,"tasks_per_s":11.6}
+rtt60_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":16.797,"tasks_per_s":59.5}
+rtt60_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":3.342,"tasks_per_s":9.6}
+rtt60_noop_32slots	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":4.583,"tasks_per_s":218.2}
+rtt0_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":0.204,"tasks_per_s":4890.4}
+rtt0_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.416,"tasks_per_s":13.2}
+rtt20_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":6.580,"tasks_per_s":152.0}
+rtt20_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":2.751,"tasks_per_s":11.6}
+rtt60_noop	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":16.862,"tasks_per_s":59.3}
+rtt60_primes	{"system":"meshpool","kind":"primes","tasks":32,"replicas":1,"ok":32,"seconds":3.342,"tasks_per_s":9.6}
+rtt60_noop_32slots	{"system":"meshpool","kind":"noop","tasks":1000,"replicas":1,"ok":1000,"seconds":4.578,"tasks_per_s":218.4}

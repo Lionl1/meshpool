@@ -2,7 +2,8 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
+use axum::body::Bytes;
 use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::de::DeserializeOwned;
 
@@ -32,6 +33,35 @@ impl std::error::Error for HttpError {}
 
 pub fn status_of(err: &anyhow::Error) -> Option<StatusCode> {
     err.downcast_ref::<HttpError>().map(|e| e.status)
+}
+
+const RETRIES: u32 = 5;
+
+/// Retry a request that is safe to repeat while the network, not the coordinator, fails
+/// (dropped connection, reset, timeout): normal on the internet.
+async fn retry<T, F, Fut>(mut call: F) -> Result<T>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut attempt = 0;
+    loop {
+        match call(attempt).await {
+            Err(e) if status_of(&e).is_none() && attempt + 1 < RETRIES => {
+                tokio::time::sleep(Duration::from_millis(100 << attempt)).await;
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// A report that was retried may have arrived the first time: 409 then means "already done".
+fn reported(result: Result<Response>, attempt: u32) -> Result<()> {
+    match result {
+        Err(e) if attempt > 0 && status_of(&e) == Some(StatusCode::CONFLICT) => Ok(()),
+        other => other.map(|_| ()),
+    }
 }
 
 /// An agent's identity, sent with every agent call.
@@ -85,18 +115,38 @@ impl Client {
     }
 
     pub async fn put_blob(&self, data: Vec<u8>) -> Result<String> {
-        let created: Created =
-            Self::json(self.req(reqwest::Method::POST, "/v1/blobs").body(data)).await?;
+        let data = Bytes::from(data); // cheap to clone for retries
+        let created: Created = retry(|_| {
+            Self::json(
+                self.req(reqwest::Method::POST, "/v1/blobs")
+                    .body(data.clone()),
+            )
+        })
+        .await?;
         Ok(created.id)
     }
 
     /// Fetch a blob and check that it matches its hash.
     pub async fn get_blob(&self, hash: &str) -> Result<Vec<u8>> {
-        let data = Self::send(self.req(reqwest::Method::GET, &format!("/v1/blobs/{hash}")))
-            .await?
-            .bytes()
-            .await?
-            .to_vec();
+        self.fetch_blob(hash, None).await
+    }
+
+    /// Fetch a blob as a registered device (devices may read blobs without a client token).
+    pub async fn get_blob_as(&self, auth: &AgentAuth, hash: &str) -> Result<Vec<u8>> {
+        self.fetch_blob(hash, Some(auth)).await
+    }
+
+    async fn fetch_blob(&self, hash: &str, auth: Option<&AgentAuth>) -> Result<Vec<u8>> {
+        let data = retry(|_| async {
+            let mut req = self.req(reqwest::Method::GET, &format!("/v1/blobs/{hash}"));
+            if let Some(auth) = auth {
+                req = req
+                    .header("x-agent-id", &auth.id)
+                    .header("x-agent-secret", &auth.secret);
+            }
+            Ok(Self::send(req).await?.bytes().await?.to_vec())
+        })
+        .await?;
         if blob_hash(&data) != hash {
             bail!("blob {hash} does not match its hash");
         }
@@ -109,12 +159,18 @@ impl Client {
         Ok(created.id)
     }
 
-    pub async fn job(&self, id: &str, wait: Duration) -> Result<JobView> {
-        Self::json(self.req(
-            reqwest::Method::GET,
-            &format!("/v1/jobs/{id}?wait={}", wait.as_secs_f64()),
-        ))
+    /// Submit many jobs in one request; ids come back in the same order.
+    pub async fn submit_batch(&self, specs: &[JobSpec]) -> Result<Vec<String>> {
+        Self::json(
+            self.req(reqwest::Method::POST, "/v1/jobs/batch")
+                .json(specs),
+        )
         .await
+    }
+
+    pub async fn job(&self, id: &str, wait: Duration) -> Result<JobView> {
+        let path = format!("/v1/jobs/{id}?wait={}", wait.as_secs_f64());
+        retry(|_| Self::json(self.req(reqwest::Method::GET, &path))).await
     }
 
     /// Wait until the job is no longer pending (or `timeout` passes).
@@ -133,7 +189,7 @@ impl Client {
     pub async fn output(&self, view: &JobView) -> Result<Vec<u8>> {
         match &view.outcome {
             Some(Outcome::Ok { output, .. }) => self.get_blob(output).await,
-            Some(Outcome::Failed { kind, detail }) => bail!(
+            Some(Outcome::Failed { kind, detail, .. }) => bail!(
                 "job {} failed on every replica: {kind:?} ({detail})",
                 view.id
             ),
@@ -164,29 +220,43 @@ impl Client {
         })
     }
 
-    pub async fn heartbeat(&self, auth: &AgentAuth) -> Result<()> {
-        Self::send(self.agent_req(reqwest::Method::POST, auth, "/heartbeat"))
-            .await
-            .map(|_| ())
+    /// Liveness, renewing the leases of the tasks the device is still working on.
+    pub async fn heartbeat(&self, auth: &AgentAuth, working_on: Vec<String>) -> Result<()> {
+        let beat = Heartbeat { tasks: working_on };
+        let req = self.agent_req(reqwest::Method::POST, auth, "/heartbeat");
+        Self::send(req.json(&beat)).await.map(|_| ())
     }
 
-    pub async fn lease(&self, auth: &AgentAuth, wait: Duration) -> Result<Option<Lease>> {
-        let req = self.agent_req(
-            reqwest::Method::GET,
-            auth,
-            &format!("/lease?wait={}", wait.as_secs_f64()),
-        );
-        let resp = Self::send(req).await?;
-        if resp.status() == StatusCode::NO_CONTENT {
-            return Ok(None);
-        }
-        Ok(Some(resp.json().await.context("bad lease")?))
+    /// Report a successful run: the output travels in the same request.
+    pub async fn report_output(
+        &self,
+        auth: &AgentAuth,
+        task_id: &str,
+        output: Vec<u8>,
+        fuel_used: u64,
+    ) -> Result<()> {
+        let path = format!("/tasks/{task_id}/output?fuel_used={fuel_used}");
+        let output = Bytes::from(output);
+        let (path, output) = (&path, &output);
+        retry(|attempt| async move {
+            let req = self.agent_req(reqwest::Method::POST, auth, path);
+            reported(Self::send(req.body(output.clone())).await, attempt)
+        })
+        .await
+    }
+
+    /// Up to `max` tasks, waiting up to `wait` for the first one.
+    pub async fn lease(&self, auth: &AgentAuth, wait: Duration, max: usize) -> Result<Vec<Lease>> {
+        let path = format!("/lease?wait={}&max={max}", wait.as_secs_f64());
+        Self::json(self.agent_req(reqwest::Method::GET, auth, &path)).await
     }
 
     pub async fn report(&self, auth: &AgentAuth, task_id: &str, outcome: &Outcome) -> Result<()> {
-        let req = self
-            .agent_req(reqwest::Method::POST, auth, &format!("/tasks/{task_id}"))
-            .json(outcome);
-        Self::send(req).await.map(|_| ())
+        let path = &format!("/tasks/{task_id}");
+        retry(|attempt| async move {
+            let req = self.agent_req(reqwest::Method::POST, auth, path);
+            reported(Self::send(req.json(outcome)).await, attempt)
+        })
+        .await
     }
 }
