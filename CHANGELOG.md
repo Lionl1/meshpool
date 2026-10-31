@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- GPU tasks (feature `gpu`): `env.gpu_run` runs a WGSL compute shader on the device's GPU
+  through wgpu over one storage buffer. Shaders are checked by naga (integers and booleans
+  only, `@compute fn main`) and charged fuel by data size and invocations. `JobSpec.gpu`
+  (`--gpu`, Python `gpu=True`) sends a job only to devices that lend a GPU (`Caps.gpus`);
+  a module calling `gpu_run` in a job without it fails as an invalid module. Rust SDK:
+  `meshpool_task::gpu_run`, example `collatz_gpu`. Protocol 0.3.
 - Rust task SDK (`sdk/rust`, crate `meshpool-task`): `task!` turns `fn(&[u8]) -> impl
   AsRef<[u8]>` into a task, `task_json!` does the same for serde types. Examples: primes,
   word count, Mandelbrot strips; tests build them to wasm32 and run them in a pool.

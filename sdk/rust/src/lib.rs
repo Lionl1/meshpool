@@ -22,6 +22,15 @@ mod host {
         fn input_len() -> i32;
         fn read_input(ptr: *mut u8);
         fn write_output(ptr: *const u8, len: i32);
+        fn gpu_run(
+            shader_ptr: *const u8,
+            shader_len: i32,
+            data_ptr: *mut u8,
+            data_len: i32,
+            x: u32,
+            y: u32,
+            z: u32,
+        );
     }
 
     pub fn input() -> Vec<u8> {
@@ -37,6 +46,33 @@ mod host {
         // SAFETY: the host copies `data` before returning.
         unsafe { write_output(data.as_ptr(), data.len() as i32) }
     }
+
+    pub fn gpu(shader: &str, data: &mut [u8], groups: [u32; 3]) {
+        // SAFETY: the host reads the shader and replaces `data` in place, both in bounds.
+        unsafe {
+            gpu_run(
+                shader.as_ptr(),
+                shader.len() as i32,
+                data.as_mut_ptr(),
+                data.len() as i32,
+                groups[0],
+                groups[1],
+                groups[2],
+            )
+        }
+    }
+}
+
+/// Run the WGSL compute shader `shader` on the device's GPU: its `@compute fn main` runs
+/// over `groups` workgroups with `data` bound as
+/// `@group(0) @binding(0) var<storage, read_write>`, and `data` is replaced by the result.
+///
+/// Submit the job with `gpu: true`. The shader may use integers and booleans only (GPU
+/// floats differ between vendors, so replicas could not agree); `data` is 4 bytes to
+/// 128 MiB, a multiple of 4. A shader that breaks these rules fails the task.
+#[cfg(target_arch = "wasm32")]
+pub fn gpu_run(shader: &str, data: &mut [u8], groups: [u32; 3]) {
+    host::gpu(shader, data, groups)
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -102,15 +102,15 @@ class Pool:
     # Jobs
 
     def submit(self, module: str, inputs: Iterable[Data], replicas: int = 2,
-               fuel: int = 10_000_000_000, memory_mb: int = 64) -> List[str]:
+               fuel: int = 10_000_000_000, memory_mb: int = 64, gpu: bool = False) -> List[str]:
         """Upload the inputs and submit one job per input; returns job ids in order.
-        `module` is a hash from `upload`."""
+        `module` is a hash from `upload`; `gpu=True` for tasks that call `gpu_run`."""
         datas = [_bytes(d) for d in inputs]
         unique = {blob_hash(d): d for d in datas}
         with ThreadPoolExecutor(self.workers) as ex:
             list(ex.map(self.put, unique.values()))
         specs = [{"module": module, "input": blob_hash(d), "fuel": fuel,
-                  "memory_mb": memory_mb, "replicas": replicas} for d in datas]
+                  "memory_mb": memory_mb, "replicas": replicas, "gpu": gpu} for d in datas]
         ids: List[str] = []
         for i in range(0, len(specs), MAX_BATCH):
             # Not retried: a lost response would submit the jobs twice.
@@ -140,7 +140,7 @@ class Pool:
     def map(self, module: str, inputs: Iterable[Data], timeout: Optional[float] = None,
             **spec) -> List[bytes]:
         """Run the task on every input; returns the outputs in input order. Keyword
-        arguments go to `submit` (replicas, fuel, memory_mb)."""
+        arguments go to `submit` (replicas, fuel, memory_mb, gpu)."""
         ids = self.submit(module, inputs, **spec)
         with ThreadPoolExecutor(self.workers) as ex:
             return list(ex.map(lambda id: self.result(id, timeout), ids))

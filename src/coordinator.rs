@@ -285,9 +285,12 @@ impl Pool {
     pub fn lease(&mut self, agent_id: &str, secret: &str) -> Result<Option<Lease>, ApiError> {
         let ip = self.authenticate(agent_id, secret)?;
         let distinct_ips = self.distinct_ips;
+        let has_gpu = !self.agents[agent_id].caps.gpus.is_empty();
         let Some(pos) = self.pending.iter().position(|t| {
             let job = &self.jobs[&self.tasks[t].job];
-            !job.assigned.contains(agent_id) && !(distinct_ips && job.ips.contains(&ip))
+            !job.assigned.contains(agent_id)
+                && !(distinct_ips && job.ips.contains(&ip))
+                && (has_gpu || !job.spec.gpu)
         }) else {
             return Ok(None);
         };
@@ -893,6 +896,7 @@ mod tests {
             fuel: 100,
             memory_mb: 1,
             replicas,
+            gpu: false,
         };
         pool.submit(spec).unwrap()
     }
@@ -1079,5 +1083,39 @@ mod tests {
         assert!(pool.job(&job).is_none() && pool.tasks.is_empty());
         assert!(pool.blob(&stray).is_none() && pool.blobs.is_empty());
         assert!(pool.agents.is_empty());
+    }
+
+    #[test]
+    fn gpu_jobs_go_to_gpu_devices_only() {
+        let mut pool = Pool::default();
+        let cpu = register(&mut pool, LOCAL).unwrap();
+        let gpu = {
+            let req = Register {
+                name: "g".into(),
+                caps: Caps {
+                    gpus: vec!["test GPU".into()],
+                    ..Caps::default()
+                },
+                protocol: PROTOCOL.into(),
+            };
+            let r = pool.register(req, LOCAL).unwrap();
+            (r.agent_id, r.secret)
+        };
+        let module = pool.put_blob(Bytes::from_static(b"m"));
+        let spec = JobSpec {
+            module,
+            input: module_input(&mut pool),
+            fuel: 100,
+            memory_mb: 1,
+            replicas: 1,
+            gpu: true,
+        };
+        pool.submit(spec).unwrap();
+        assert!(lease(&mut pool, &cpu).is_none());
+        assert!(lease(&mut pool, &gpu).is_some());
+    }
+
+    fn module_input(pool: &mut Pool) -> String {
+        pool.put_blob(Bytes::from_static(b"i"))
     }
 }
