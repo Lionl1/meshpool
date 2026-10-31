@@ -11,6 +11,7 @@ pip install ./sdk/python        # from the repository root
 from meshpool import Pool, JobFailed
 
 pool = Pool("http://coordinator:7700")        # or MESHPOOL_URL / MESHPOOL_TOKEN
+# HTTPS pool with a self-signed certificate: Pool(url, ca_cert="cert.pem") or MESHPOOL_CA_CERT
 module = pool.upload("my_task.wasm")          # a path or the module's bytes
 outputs = pool.map(module, [b"a", b"b", b"c"], replicas=2)   # outputs in input order
 wordcount = pool.upload("wordcount.wasm")     # a Rust task_json! task
