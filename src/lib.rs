@@ -5,6 +5,7 @@ pub mod client;
 pub mod coordinator;
 pub mod proto;
 pub mod sandbox;
+pub mod store;
 
 /// Read a task module: `.wat` text is compiled to the binary format devices accept.
 pub fn load_module(path: &std::path::Path) -> anyhow::Result<Vec<u8>> {

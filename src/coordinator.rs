@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -13,12 +14,13 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 
 use crate::proto::*;
 use crate::sandbox::MAX_OUTPUT;
+use crate::store::{Blobs, Snapshot, Store, ago};
 
 pub const MAX_STRIKES: u32 = 3;
 pub const EXTRA_REPLICAS: u32 = 2; // added one by one when replicas disagree
@@ -47,6 +49,8 @@ pub struct Config {
     /// Replicas of a job go to devices with distinct IP addresses, and strikes count per
     /// address, so one machine cannot outvote others or shed a ban by re-registering.
     pub distinct_ips: bool,
+    /// Keep the pool's state and blobs here and reload them on start (None: memory only).
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -57,6 +61,7 @@ impl Default for Config {
             agent_timeout: Duration::from_secs(30),
             lease_timeout: Duration::from_secs(60),
             distinct_ips: true,
+            data_dir: None,
         }
     }
 }
@@ -86,21 +91,25 @@ impl IntoResponse for ApiError {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct Agent {
     name: String,
     caps: Caps,
     ip: IpAddr,
     secret: String,
+    #[serde(with = "ago")]
     last_seen: Instant,
     strikes: u32,
     credits: u64,
 }
 
+#[derive(Serialize, Deserialize)]
 struct Job {
     spec: JobSpec,
     status: JobStatus,
     outcome: Option<Outcome>,
     error: Option<String>,
+    #[serde(with = "ago::option")]
     decided_at: Option<Instant>,
     tasks: Vec<String>,
     /// Devices (and their addresses) holding or having voted on a replica: replicas go to
@@ -109,16 +118,24 @@ struct Job {
     ips: HashSet<IpAddr>,
     votes: Vec<(String, String, Outcome)>, // agent, vote, outcome
     /// Woken when the job is decided (clients long-poll on it).
+    #[serde(skip)]
     decided: Arc<Notify>,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Serialize, Deserialize)]
 enum TaskState {
     Pending,
-    Leased { agent: String, renewed: Instant },
+    /// After a restart the device may still be running it: the lease stays, and expires as
+    /// usual unless the device's heartbeats renew it.
+    Leased {
+        agent: String,
+        #[serde(with = "ago")]
+        renewed: Instant,
+    },
     Closed, // voted, or not needed any more
 }
 
+#[derive(Serialize, Deserialize)]
 struct Task {
     job: String,
     state: TaskState,
@@ -129,16 +146,27 @@ struct Blob {
     added: Instant,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Pool {
+    #[serde(skip)]
     distinct_ips: bool,
     agents: HashMap<String, Agent>,
     ip_strikes: HashMap<IpAddr, u32>,
     jobs: HashMap<String, Job>,
     tasks: HashMap<String, Task>,
     pending: VecDeque<String>,
+    /// Saved as files by the store, not in the state.
+    #[serde(skip)]
     blobs: HashMap<String, Blob>,
+    #[serde(skip)]
     pruned: Option<Instant>,
+    /// Blobs added and dropped since the last snapshot (kept only when persisting).
+    #[serde(skip)]
+    persist: bool,
+    #[serde(skip)]
+    blobs_added: HashSet<String>,
+    #[serde(skip)]
+    blobs_removed: HashSet<String>,
 }
 
 fn new_id() -> String {
@@ -153,9 +181,56 @@ impl Pool {
         }
     }
 
+    /// Reload a pool saved by `snapshot`; leases survive (see `TaskState::Leased`).
+    pub fn restore(cfg: &Config, state: &[u8], blobs: Blobs) -> Result<Self, serde_json::Error> {
+        let mut pool: Pool = serde_json::from_slice(state)?;
+        pool.distinct_ips = cfg.distinct_ips;
+        pool.persist = true;
+        let added = Instant::now();
+        pool.blobs = blobs
+            .into_iter()
+            .map(|(hash, data)| (hash, Blob { data, added }))
+            .collect();
+        Ok(pool)
+    }
+
+    /// The state and the blob changes since the last snapshot.
+    pub fn snapshot(&mut self) -> Result<Snapshot, serde_json::Error> {
+        let state = serde_json::to_vec(&*self)?;
+        let added = self
+            .blobs_added
+            .drain()
+            .filter_map(|h| self.blobs.get(&h).map(|b| (h, b.data.clone())))
+            .collect();
+        let removed = self.blobs_removed.drain().collect();
+        Ok(Snapshot {
+            state,
+            added,
+            removed,
+        })
+    }
+
+    /// A snapshot that could not be written: its blob changes are pending again.
+    pub fn unsaved(&mut self, snap: Snapshot) {
+        for (hash, _) in snap.added {
+            if self.blobs.contains_key(&hash) && !self.blobs_removed.contains(&hash) {
+                self.blobs_added.insert(hash);
+            }
+        }
+        for hash in snap.removed {
+            if !self.blobs.contains_key(&hash) {
+                self.blobs_removed.insert(hash);
+            }
+        }
+    }
+
     /// Store a blob under its hash (computed by the caller, outside the pool lock).
     pub fn insert_blob(&mut self, hash: String, data: Bytes) {
         let added = Instant::now();
+        if self.persist && !self.blobs.contains_key(&hash) {
+            self.blobs_removed.remove(&hash);
+            self.blobs_added.insert(hash.clone());
+        }
         self.blobs.entry(hash).or_insert(Blob { data, added }).added = added;
     }
 
@@ -504,8 +579,16 @@ impl Pool {
                 }
             }
         }
-        self.blobs
-            .retain(|hash, blob| used.contains(hash) || now - blob.added < BLOB_TTL);
+        let (persist, added, removed) =
+            (self.persist, &mut self.blobs_added, &mut self.blobs_removed);
+        self.blobs.retain(|hash, blob| {
+            let keep = used.contains(hash) || now - blob.added < BLOB_TTL;
+            if !keep && persist {
+                added.remove(hash);
+                removed.insert(hash.clone());
+            }
+            keep
+        });
         let leasing: HashSet<&String> = self
             .tasks
             .values()
@@ -818,7 +901,8 @@ pub struct Tls {
 /// Serve the API on `listener`: plain HTTP, or HTTPS with `tls`. Without TLS, agent
 /// secrets and client tokens cross the network readable; put a TLS proxy in front then.
 pub async fn serve(listener: TcpListener, cfg: Config, tls: Option<Tls>) -> anyhow::Result<()> {
-    let service = app(cfg).into_make_service_with_connect_info::<SocketAddr>();
+    let (app, _background) = app(cfg)?;
+    let service = app.into_make_service_with_connect_info::<SocketAddr>();
     match tls {
         None => axum::serve(listener, service).await?,
         Some(tls) => {
@@ -832,14 +916,46 @@ pub async fn serve(listener: TcpListener, cfg: Config, tls: Option<Tls>) -> anyh
     Ok(())
 }
 
-fn app(cfg: Config) -> Router {
+/// How often the state is saved to `data_dir`: a crash loses at most this much work.
+pub const SAVE_EVERY: Duration = Duration::from_secs(1);
+
+/// Background tasks of one coordinator, stopped when it stops (so a coordinator restarted
+/// in the same process does not share its data directory with a ghost).
+struct Background(Vec<tokio::task::JoinHandle<()>>);
+
+impl Drop for Background {
+    fn drop(&mut self) {
+        for task in &self.0 {
+            task.abort();
+        }
+    }
+}
+
+fn app(cfg: Config) -> anyhow::Result<(Router, Background)> {
+    let mut store = cfg.data_dir.as_deref().map(Store::open).transpose()?;
+    let pool = match &mut store {
+        None => Pool::new(&cfg),
+        Some(store) => match store.load()? {
+            Some((state, blobs)) => Pool::restore(&cfg, &state, blobs)?,
+            None => Pool {
+                persist: true,
+                ..Pool::new(&cfg)
+            },
+        },
+    };
     let shared = Arc::new(Shared {
-        pool: Mutex::new(Pool::new(&cfg)),
+        pool: Mutex::new(pool),
         cfg,
         tasks_changed: Notify::new(),
     });
+    let mut background = Background(Vec::new());
+    if let Some(store) = store {
+        background
+            .0
+            .push(tokio::spawn(save_loop(shared.clone(), store)));
+    }
     let sweeper = shared.clone();
-    tokio::spawn(async move {
+    background.0.push(tokio::spawn(async move {
         let every = (sweeper.cfg.agent_timeout.min(sweeper.cfg.lease_timeout) / 3)
             .max(Duration::from_millis(50));
         loop {
@@ -847,8 +963,8 @@ fn app(cfg: Config) -> Router {
             sweeper.pool().sweep(&sweeper.cfg);
             sweeper.tasks_changed.notify_waiters();
         }
-    });
-    Router::new()
+    }));
+    let router = Router::new()
         .route("/v1/blobs", post(put_blob))
         .route("/v1/blobs/{hash}", get(get_blob))
         .route("/v1/jobs", post(submit))
@@ -860,7 +976,40 @@ fn app(cfg: Config) -> Router {
         .route("/v1/agents/{id}/tasks/{task}", post(report))
         .route("/v1/agents/{id}/tasks/{task}/output", post(report_output))
         .layer(DefaultBodyLimit::max(MAX_BLOB))
-        .with_state(shared)
+        .with_state(shared);
+    Ok((router, background))
+}
+
+async fn save_loop(shared: Arc<Shared>, mut store: Store) {
+    loop {
+        tokio::time::sleep(SAVE_EVERY).await;
+        let snap = match shared.pool().snapshot() {
+            Ok(snap) => snap,
+            Err(e) => {
+                eprintln!("[!] saving state: {e}");
+                continue;
+            }
+        };
+        // Disk writes happen outside the pool lock.
+        let saved = tokio::task::spawn_blocking(move || {
+            let result = store.save(&snap);
+            (store, snap, result)
+        })
+        .await;
+        match saved {
+            Ok((back, snap, result)) => {
+                store = back;
+                if let Err(e) = result {
+                    eprintln!("[!] saving state: {e:#}");
+                    shared.pool().unsaved(snap); // try those blobs again next time
+                }
+            }
+            Err(e) => {
+                eprintln!("[!] saving state: {e}");
+                return;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1079,5 +1228,52 @@ mod tests {
         assert!(pool.job(&job).is_none() && pool.tasks.is_empty());
         assert!(pool.blob(&stray).is_none() && pool.blobs.is_empty());
         assert!(pool.agents.is_empty());
+    }
+
+    #[test]
+    fn snapshot_restores_jobs_devices_and_leases() {
+        let (mut pool, job, devices) = pool_with_job(2, 3);
+        pool.persist = true;
+        let good = ok(&mut pool, b"right");
+        run(&mut pool, &devices[0], good.clone());
+        let held = lease(&mut pool, &devices[1]).unwrap(); // in flight across the restart
+        let snap = pool.snapshot().unwrap();
+        assert_eq!(snap.added.len(), 1); // the output; module and input came before `persist`
+        let blobs: Blobs = pool
+            .blobs
+            .iter()
+            .map(|(h, b)| (h.clone(), b.data.clone()))
+            .collect();
+
+        let mut back = Pool::restore(&Config::default(), &snap.state, blobs).unwrap();
+        assert_eq!(back.job(&job).unwrap().votes.len(), 1);
+        assert_eq!(stats(&back, &devices[0]), (0, 0));
+        // The device still running its replica reports to the restarted coordinator.
+        report(&mut back, &devices[1], &held, good);
+        assert_eq!(back.job(&job).unwrap().status, JobStatus::Done);
+        assert_eq!(stats(&back, &devices[0]), (0, 7));
+        assert_eq!(stats(&back, &devices[1]), (0, 7));
+        assert!(back.distinct_ips); // from the config, not the file
+    }
+
+    #[test]
+    fn snapshots_carry_only_blob_changes() {
+        let mut pool = Pool {
+            persist: true,
+            ..Pool::default()
+        };
+        let kept = pool.put_blob(Bytes::from_static(b"kept"));
+        assert_eq!(pool.snapshot().unwrap().added.len(), 1);
+        assert!(pool.snapshot().unwrap().added.is_empty());
+        pool.prune(Instant::now() + BLOB_TTL + Duration::from_secs(1));
+        assert_eq!(pool.snapshot().unwrap().removed, vec![kept.clone()]);
+        // Uploaded again before the next snapshot: written, not deleted.
+        let fresh = pool.put_blob(Bytes::from_static(b"fresh"));
+        pool.prune(Instant::now() + BLOB_TTL + Duration::from_secs(1));
+        pool.put_blob(Bytes::from_static(b"fresh"));
+        let snap = pool.snapshot().unwrap();
+        assert_eq!(snap.added.len(), 1);
+        assert_eq!(snap.added[0].0, fresh);
+        assert!(snap.removed.is_empty());
     }
 }

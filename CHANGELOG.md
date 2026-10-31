@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Persistence: `meshpool coordinator --data-dir` saves the pool (devices, credits, strikes,
+  jobs, tasks, queue) to `state.json` and blobs to `blobs/<sha256>` every second, written
+  atomically, blobs before the state referring to them; reloaded on start. Leases survive a
+  restart. Background tasks stop with the server.
 - Rust task SDK (`sdk/rust`, crate `meshpool-task`): `task!` turns `fn(&[u8]) -> impl
   AsRef<[u8]>` into a task, `task_json!` does the same for serde types. Examples: primes,
   word count, Mandelbrot strips; tests build them to wasm32 and run them in a pool.

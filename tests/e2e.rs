@@ -279,3 +279,50 @@ async fn pool_over_tls() {
     // Without the pool's certificate the connection is refused, not downgraded.
     assert!(client(None).agents().await.is_err());
 }
+
+#[tokio::test]
+async fn pool_survives_a_coordinator_restart() {
+    let dir = std::env::temp_dir().join(format!("meshpool-{}", uuid::Uuid::new_v4()));
+    let cfg = Config {
+        data_dir: Some(dir.clone()),
+        ..fast()
+    };
+    let start = |cfg: Config| async move {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        (url, tokio::spawn(coordinator::serve(listener, cfg, None)))
+    };
+
+    // Before: one job done, one waiting for devices that are gone.
+    let (url, first) = start(cfg.clone()).await;
+    let mut agents = Vec::new();
+    for name in ["a", "b"] {
+        let agent = Agent::connect(Client::new(&url, None), name, Duration::from_millis(100), 1)
+            .await
+            .unwrap();
+        agents.push(tokio::spawn(agent.run()));
+    }
+    let client = Client::new(&url, None);
+    let done = submit(&client, "reverse.wat", b"kept", 2, 1_000_000).await;
+    client.wait(&done, WAIT).await.unwrap();
+    for agent in agents {
+        agent.abort();
+    }
+    let waiting = submit(&client, "reverse.wat", b"later", 2, 1_000_000).await;
+    tokio::time::sleep(coordinator::SAVE_EVERY * 2).await;
+    first.abort();
+    let _ = first.await;
+
+    // After: the same data directory on a new address.
+    let (url, _second) = start(cfg).await;
+    let client = Client::new(&url, None);
+    let view = client.job(&done, Duration::ZERO).await.unwrap();
+    assert_eq!(client.output(&view).await.unwrap(), b"tpek");
+    assert!(client.agents().await.unwrap().iter().all(|a| a.credits > 0));
+    for name in ["c", "d"] {
+        honest_agent(&url, name).await;
+    }
+    let view = client.wait(&waiting, WAIT).await.unwrap();
+    assert_eq!(client.output(&view).await.unwrap(), b"retal");
+    std::fs::remove_dir_all(dir).unwrap();
+}
