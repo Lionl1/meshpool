@@ -5,8 +5,10 @@ reverse.wasm and spin.wasm are examples/tasks/*.wat in binary form."""
 import os
 import socket
 import subprocess
+import tempfile
 import time
 import unittest
+import urllib.error
 from pathlib import Path
 
 from meshpool import JobFailed, Pool
@@ -66,6 +68,47 @@ class PoolTest(unittest.TestCase):
         with self.assertRaises(JobFailed) as e:
             self.pool.map(module, [b""], fuel=100_000, timeout=30)
         self.assertEqual(e.exception.view["outcome"]["kind"], "out_of_fuel")
+
+
+class TlsTest(unittest.TestCase):
+    """A coordinator with a self-signed certificate: trusted with `ca_cert`, refused without."""
+
+    def test_https_pool(self):
+        if "MESHPOOL_BIN" not in os.environ:
+            subprocess.run(["cargo", "build", "--quiet", "--bin", "meshpool"], cwd=ROOT, check=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            cert, key = f"{tmp}/cert.pem", f"{tmp}/key.pem"
+            subprocess.run(
+                ["openssl", "req", "-x509", "-newkey", "ec",
+                 "-pkeyopt", "ec_paramgen_curve:P-256", "-pkeyopt", "ec_param_enc:named_curve",
+                 "-nodes", "-days", "1", "-subj", "/CN=localhost", "-keyout", key, "-out", cert,
+                 "-addext", "subjectAltName=DNS:localhost",
+                 "-addext", "extendedKeyUsage=serverAuth"],
+                check=True, capture_output=True)
+            port = free_port()
+            url = f"https://localhost:{port}"
+            procs = [subprocess.Popen(
+                [BIN, "coordinator", "--listen", f"127.0.0.1:{port}", "--allow-same-ip",
+                 "--tls-cert", cert, "--tls-key", key], stderr=subprocess.DEVNULL)]
+            try:
+                pool = Pool(url, ca_cert=cert)
+                for _ in range(100):
+                    try:
+                        pool.agents()
+                        break
+                    except OSError:
+                        time.sleep(0.05)
+                procs.append(subprocess.Popen(
+                    [BIN, "--url", url, "--ca-cert", cert, "agent", "--name", "t"],
+                    stderr=subprocess.DEVNULL))
+                module = pool.upload(HERE / "reverse.wasm")
+                self.assertEqual(pool.run(module, "tls", replicas=1, timeout=30), b"slt")
+                with self.assertRaises(urllib.error.URLError):
+                    Pool(url).agents()
+            finally:
+                for p in procs:
+                    p.kill()
+                    p.wait()
 
 
 if __name__ == "__main__":

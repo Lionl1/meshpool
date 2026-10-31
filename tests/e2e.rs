@@ -13,7 +13,7 @@ const WAIT: Duration = Duration::from_secs(30);
 async fn coordinator(cfg: Config) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(coordinator::serve(listener, cfg));
+    tokio::spawn(coordinator::serve(listener, cfg, None));
     url
 }
 
@@ -248,4 +248,34 @@ async fn a_multi_slot_device_runs_a_batch_in_parallel() {
         let view = client.wait(id, WAIT).await.unwrap();
         assert_eq!(client.output(&view).await.unwrap(), [b'0' + i as u8, b'a']);
     }
+}
+
+#[tokio::test]
+async fn pool_over_tls() {
+    let rcgen::CertifiedKey { cert, signing_key } =
+        rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let tls = coordinator::Tls {
+        cert_pem: cert.pem().into_bytes(),
+        key_pem: signing_key.serialize_pem().into_bytes(),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "https://localhost:{}",
+        listener.local_addr().unwrap().port()
+    );
+    tokio::spawn(coordinator::serve(listener, fast(), Some(tls)));
+    let ca = cert.pem().into_bytes();
+    let client = |ca: Option<&[u8]>| Client::with_root_cert(&url, None, ca).unwrap();
+
+    for name in ["a", "b"] {
+        let agent = Agent::connect(client(Some(&ca)), name, Duration::from_millis(100), 1)
+            .await
+            .unwrap();
+        tokio::spawn(agent.run());
+    }
+    let job = submit(&client(Some(&ca)), "reverse.wat", b"secret", 2, 1_000_000).await;
+    let view = client(Some(&ca)).wait(&job, WAIT).await.unwrap();
+    assert_eq!(client(Some(&ca)).output(&view).await.unwrap(), b"terces");
+    // Without the pool's certificate the connection is refused, not downgraded.
+    assert!(client(None).agents().await.is_err());
 }

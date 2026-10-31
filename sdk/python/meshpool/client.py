@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -42,10 +43,17 @@ def _bytes(data: Data) -> bytes:
 class Pool:
     """A client of one coordinator. Safe to share between threads."""
 
-    def __init__(self, url: Optional[str] = None, token: Optional[str] = None, workers: int = 32):
+    def __init__(self, url: Optional[str] = None, token: Optional[str] = None, workers: int = 32,
+                 ca_cert: Optional[str] = None):
+        """`ca_cert`: an extra CA certificate (PEM path) to trust, e.g. the pool's
+        self-signed one; default `MESHPOOL_CA_CERT`."""
         self.url = (url or os.environ.get("MESHPOOL_URL", "http://127.0.0.1:7700")).rstrip("/")
         self.token = token or os.environ.get("MESHPOOL_TOKEN")
         self.workers = workers
+        self.ssl = ssl.create_default_context()
+        ca_cert = ca_cert or os.environ.get("MESHPOOL_CA_CERT")
+        if ca_cert:
+            self.ssl.load_verify_locations(cafile=ca_cert)
 
     def _request(self, method: str, path: str, body: Optional[bytes] = None,
                  content_type: Optional[str] = None, retry: bool = True) -> bytes:
@@ -57,7 +65,7 @@ class Pool:
         for attempt in range(ATTEMPTS):
             req = urllib.request.Request(self.url + path, data=body, method=method, headers=headers)
             try:
-                with urllib.request.urlopen(req, timeout=120) as resp:
+                with urllib.request.urlopen(req, timeout=120, context=self.ssl) as resp:
                     return resp.read()
             except urllib.error.HTTPError as e:
                 raise HttpError(e.code, e.read().decode(errors="replace")) from None

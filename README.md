@@ -37,6 +37,21 @@ pool = Pool("http://coordinator:7700")
 outputs = pool.map(pool.upload("my_task.wasm"), [b"a", b"b", b"c"])
 ```
 
+### HTTPS
+
+Device secrets and tokens travel with every request, so outside a trusted LAN serve the
+API over HTTPS: with a real certificate, a TLS proxy, or a self-signed one:
+
+```bash
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve \
+  -nodes -days 365 -subj /CN=pool.example -keyout key.pem -out cert.pem \
+  -addext subjectAltName=DNS:pool.example -addext extendedKeyUsage=serverAuth
+meshpool coordinator --listen 0.0.0.0:7700 --tls-cert cert.pem --tls-key key.pem
+meshpool --url https://pool.example:7700 --ca-cert cert.pem agent   # or MESHPOOL_CA_CERT
+```
+
+The coordinator warns when it serves plain HTTP on a non-loopback address.
+
 ## Writing a task
 
 In Rust, with the [SDK](sdk/rust): write an ordinary function and mark it as the task.

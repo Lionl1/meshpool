@@ -8,6 +8,9 @@
 - Python client (`sdk/python`, standard library only): `Pool.map` / `map_json` run a task
   over many inputs and return the verified outputs in order; `JobFailed` when a job has no
   agreed output. Tests run it against a real coordinator and agents.
+- HTTPS: `meshpool coordinator --tls-cert --tls-key` (rustls); clients and agents trust an
+  extra CA with `--ca-cert` / `MESHPOOL_CA_CERT`. The coordinator warns when it serves plain
+  HTTP on a non-loopback address. `coordinator::serve` takes an `Option<Tls>`.
 
 ## 0.2.0
 

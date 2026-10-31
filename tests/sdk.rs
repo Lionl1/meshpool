@@ -83,7 +83,7 @@ async fn rust_task_renders_on_a_pool() {
         distinct_ips: false,
         ..Config::default()
     };
-    tokio::spawn(coordinator::serve(listener, cfg));
+    tokio::spawn(coordinator::serve(listener, cfg, None));
     for name in ["a", "b"] {
         let client = Client::new(&url, None);
         let agent = Agent::connect(client, name, Duration::from_millis(100), 2)
