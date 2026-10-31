@@ -29,6 +29,21 @@ Tokens: `MESHPOOL_TOKEN` for clients, `MESHPOOL_AGENT_TOKEN` to restrict who may
 Replicas of a job go to devices with distinct IP addresses; to try a pool on one machine,
 start the coordinator with `--allow-same-ip`.
 
+### HTTPS
+
+Device secrets and tokens travel with every request, so outside a trusted LAN serve the
+API over HTTPS: with a real certificate, a TLS proxy, or a self-signed one:
+
+```bash
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve \
+  -nodes -days 365 -subj /CN=pool.example -keyout key.pem -out cert.pem \
+  -addext subjectAltName=DNS:pool.example -addext extendedKeyUsage=serverAuth
+meshpool coordinator --listen 0.0.0.0:7700 --tls-cert cert.pem --tls-key key.pem
+meshpool --url https://pool.example:7700 --ca-cert cert.pem agent   # or MESHPOOL_CA_CERT
+```
+
+The coordinator warns when it serves plain HTTP on a non-loopback address.
+
 ## Writing a task
 
 A task is a WASM module exporting `memory` and `run()`, with three host functions in

@@ -21,7 +21,7 @@ Three parties, none trusting the others more than necessary:
 |---|---|
 | A task harms the device that runs it | Tasks are WebAssembly modules run by wasmtime: no files, network, clock or randomness; memory and CPU (fuel) are capped |
 | A device returns a wrong result (bug, overclock, cheating) | Every task runs on several devices (replicas); a result is accepted only when a quorum of them agree bit for bit; dissenters get strikes and are banned after 3 |
-| A device impersonates another one | Each device gets a secret at registration; every agent call carries it |
+| A device impersonates another one | Each device gets a secret at registration; every agent call carries it, over HTTPS (`--tls-cert`) outside a trusted LAN |
 | A device sheds a ban by registering again | Strikes also count per IP address: once an address has 3, all its devices are banned and it cannot register new ones |
 | A device reads the task's data | **Not defended**: contributed devices see their inputs. Confidential workloads need TEEs (later) or trusted pools |
 | One person runs many devices (Sybil) to win the quorum | Partly: replicas of a job go to distinct devices *and distinct IP addresses*. Later: reputation weighting, random assignment, owner identity/stake |

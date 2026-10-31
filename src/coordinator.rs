@@ -809,7 +809,30 @@ async fn report(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn serve(listener: TcpListener, cfg: Config) -> anyhow::Result<()> {
+/// Certificate chain and private key (PEM) for serving HTTPS.
+pub struct Tls {
+    pub cert_pem: Vec<u8>,
+    pub key_pem: Vec<u8>,
+}
+
+/// Serve the API on `listener`: plain HTTP, or HTTPS with `tls`. Without TLS, agent
+/// secrets and client tokens cross the network readable; put a TLS proxy in front then.
+pub async fn serve(listener: TcpListener, cfg: Config, tls: Option<Tls>) -> anyhow::Result<()> {
+    let service = app(cfg).into_make_service_with_connect_info::<SocketAddr>();
+    match tls {
+        None => axum::serve(listener, service).await?,
+        Some(tls) => {
+            let config =
+                axum_server::tls_rustls::RustlsConfig::from_pem(tls.cert_pem, tls.key_pem).await?;
+            axum_server::from_tcp_rustls(listener.into_std()?, config)?
+                .serve(service)
+                .await?
+        }
+    }
+    Ok(())
+}
+
+fn app(cfg: Config) -> Router {
     let shared = Arc::new(Shared {
         pool: Mutex::new(Pool::new(&cfg)),
         cfg,
@@ -825,7 +848,7 @@ pub async fn serve(listener: TcpListener, cfg: Config) -> anyhow::Result<()> {
             sweeper.tasks_changed.notify_waiters();
         }
     });
-    let app = Router::new()
+    Router::new()
         .route("/v1/blobs", post(put_blob))
         .route("/v1/blobs/{hash}", get(get_blob))
         .route("/v1/jobs", post(submit))
@@ -837,10 +860,7 @@ pub async fn serve(listener: TcpListener, cfg: Config) -> anyhow::Result<()> {
         .route("/v1/agents/{id}/tasks/{task}", post(report))
         .route("/v1/agents/{id}/tasks/{task}/output", post(report_output))
         .layer(DefaultBodyLimit::max(MAX_BLOB))
-        .with_state(shared);
-    let service = app.into_make_service_with_connect_info::<SocketAddr>();
-    axum::serve(listener, service).await?;
-    Ok(())
+        .with_state(shared)
 }
 
 #[cfg(test)]

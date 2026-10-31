@@ -73,15 +73,24 @@ pub struct AgentAuth {
 
 impl Client {
     pub fn new(base: &str, token: Option<String>) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()
-            .expect("http client");
-        Client {
+        Self::with_root_cert(base, token, None).expect("http client")
+    }
+
+    /// A client that also trusts `ca_pem` (PEM), e.g. a pool's self-signed certificate.
+    pub fn with_root_cert(
+        base: &str,
+        token: Option<String>,
+        ca_pem: Option<&[u8]>,
+    ) -> Result<Self> {
+        let mut http = reqwest::Client::builder().timeout(Duration::from_secs(120));
+        if let Some(pem) = ca_pem {
+            http = http.add_root_certificate(reqwest::Certificate::from_pem(pem)?);
+        }
+        Ok(Client {
             base: base.trim_end_matches('/').into(),
             token,
-            http,
-        }
+            http: http.build()?,
+        })
     }
 
     fn req(&self, method: reqwest::Method, path: &str) -> RequestBuilder {

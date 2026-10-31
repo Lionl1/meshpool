@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- HTTPS: `meshpool coordinator --tls-cert --tls-key` (rustls); clients and agents trust an
+  extra CA with `--ca-cert` / `MESHPOOL_CA_CERT`. The coordinator warns when it serves plain
+  HTTP on a non-loopback address. `coordinator::serve` takes an `Option<Tls>`.
+
 ## 0.2.0
 
 Fixes from the first review:

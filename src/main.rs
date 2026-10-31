@@ -21,6 +21,9 @@ struct Cli {
         global = true
     )]
     url: String,
+    /// Extra CA certificate (PEM) to trust, e.g. a pool's self-signed certificate.
+    #[arg(long, env = "MESHPOOL_CA_CERT", global = true)]
+    ca_cert: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -46,6 +49,12 @@ enum Command {
         /// addresses (for a pool on one machine or one LAN behind a single address).
         #[arg(long)]
         allow_same_ip: bool,
+        /// Serve HTTPS with this certificate chain (PEM); needs --tls-key.
+        #[arg(long, env = "MESHPOOL_TLS_CERT", requires = "tls_key")]
+        tls_cert: Option<PathBuf>,
+        /// Private key (PEM) for --tls-cert.
+        #[arg(long, env = "MESHPOOL_TLS_KEY", requires = "tls_cert")]
+        tls_key: Option<PathBuf>,
     },
     /// Lend this device to the pool.
     Agent {
@@ -110,6 +119,8 @@ fn hostname() -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let ca = cli.ca_cert.as_ref().map(std::fs::read).transpose()?;
+    let client = |token| Client::with_root_cert(&cli.url, token, ca.as_deref());
     match cli.command {
         Command::Coordinator {
             listen,
@@ -118,9 +129,26 @@ async fn main() -> Result<()> {
             agent_timeout,
             lease_timeout,
             allow_same_ip,
+            tls_cert,
+            tls_key,
         } => {
             let listener = tokio::net::TcpListener::bind(&listen).await?;
-            eprintln!("[*] coordinator on http://{}", listener.local_addr()?);
+            let addr = listener.local_addr()?;
+            let tls = match (tls_cert, tls_key) {
+                (Some(cert), Some(key)) => Some(coordinator::Tls {
+                    cert_pem: std::fs::read(cert)?,
+                    key_pem: std::fs::read(key)?,
+                }),
+                _ => None,
+            };
+            let scheme = if tls.is_some() { "https" } else { "http" };
+            eprintln!("[*] coordinator on {scheme}://{addr}");
+            if tls.is_none() && !addr.ip().is_loopback() {
+                eprintln!(
+                    "[!] plain HTTP: device secrets and tokens are readable on the network; \
+                     use --tls-cert/--tls-key or a TLS proxy"
+                );
+            }
             if agent_token.is_none() {
                 eprintln!(
                     "[*] open pool: any device may join (set MESHPOOL_AGENT_TOKEN to restrict)"
@@ -133,7 +161,7 @@ async fn main() -> Result<()> {
                 lease_timeout: Duration::from_secs_f64(lease_timeout),
                 distinct_ips: !allow_same_ip,
             };
-            coordinator::serve(listener, cfg).await
+            coordinator::serve(listener, cfg, tls).await
         }
         Command::Agent {
             name,
@@ -142,7 +170,7 @@ async fn main() -> Result<()> {
             slots,
         } => {
             let agent = Agent::connect(
-                Client::new(&cli.url, token),
+                client(token)?,
                 &name.unwrap_or_else(hostname),
                 Duration::from_secs_f64(heartbeat),
                 slots.unwrap_or_else(|| Caps::detect().cpus),
@@ -160,7 +188,7 @@ async fn main() -> Result<()> {
             detach,
             token,
         } => {
-            let client = Client::new(&cli.url, token);
+            let client = client(token)?;
             let input = match input_file {
                 Some(path) => std::fs::read(path)?,
                 None => input.unwrap_or_default().into_bytes(),
@@ -184,14 +212,12 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Job { id, token } => {
-            let view = Client::new(&cli.url, token)
-                .job(&id, Duration::ZERO)
-                .await?;
+            let view = client(token)?.job(&id, Duration::ZERO).await?;
             println!("{}", serde_json::to_string_pretty(&view)?);
             Ok(())
         }
         Command::Agents { token } => {
-            for a in Client::new(&cli.url, token).agents().await? {
+            for a in client(token)?.agents().await? {
                 let state = if a.banned {
                     "banned"
                 } else if a.online {
