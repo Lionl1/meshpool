@@ -120,6 +120,22 @@ fn hostname() -> String {
         .unwrap_or_else(|| "device".into())
 }
 
+/// Ctrl-C, or SIGTERM (systemd, docker stop).
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = signal(SignalKind::terminate()).expect("SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
+    eprintln!("[*] shutting down");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -167,7 +183,7 @@ async fn main() -> Result<()> {
                 distinct_ips: !allow_same_ip,
                 data_dir,
             };
-            coordinator::serve(listener, cfg, tls).await
+            coordinator::serve_until(listener, cfg, tls, shutdown_signal()).await
         }
         Command::Agent {
             name,
