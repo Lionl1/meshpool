@@ -50,6 +50,7 @@ pub async fn check(client: &Client, tasks: usize, n: u32, replicas: u32) -> Resu
             fuel: u64::MAX / 2,
             memory_mb: 1,
             replicas,
+            gpu: false,
         });
     }
     let ids = client.submit_batch(&specs).await?;

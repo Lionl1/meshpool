@@ -63,6 +63,7 @@ async fn submit(client: &Client, task: &str, input: &[u8], replicas: u32, fuel: 
         fuel,
         memory_mb: 16,
         replicas,
+        gpu: false,
     };
     client.submit(&spec).await.unwrap()
 }
@@ -241,6 +242,7 @@ async fn a_multi_slot_device_runs_a_batch_in_parallel() {
             fuel: 1_000_000,
             memory_mb: 16,
             replicas: 1,
+            gpu: false,
         });
     }
     let ids = client.submit_batch(&specs).await.unwrap();

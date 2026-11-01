@@ -4,6 +4,8 @@ pub mod agent;
 pub mod check;
 pub mod client;
 pub mod coordinator;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod proto;
 pub mod sandbox;
 pub mod store;

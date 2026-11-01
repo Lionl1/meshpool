@@ -48,7 +48,7 @@ fn rust_tasks_run_deterministically_in_the_sandbox() {
     let sandbox = Sandbox::new().unwrap();
     let run = |name: &str, input: Vec<u8>| {
         let module = sandbox.compile(&module(name)).unwrap();
-        sandbox.run(&module, input, 10_000_000_000, 64)
+        sandbox.run(&module, input, 10_000_000_000, 64, false)
     };
 
     let primes = run("primes", u32s(&[100_000])).unwrap();
@@ -105,6 +105,7 @@ async fn rust_task_renders_on_a_pool() {
             fuel: 1_000_000_000,
             memory_mb: 16,
             replicas: 2,
+            gpu: false,
         });
     }
     let mut image = Vec::new();
@@ -121,7 +122,79 @@ async fn rust_task_renders_on_a_pool() {
             u32s(&[width, height, 0, height]),
             1_000_000_000,
             16,
+            false,
         )
         .unwrap();
     assert_eq!(image, whole.output);
+}
+
+/// A GPU task (Collatz steps in a WGSL shader) on a pool with one GPU device. Needs the
+/// `gpu` feature and a GPU; skipped (with a note) otherwise.
+#[cfg(feature = "gpu")]
+#[tokio::test]
+async fn gpu_task_runs_on_a_gpu_device() {
+    if meshpool::gpu::Gpu::open().is_none() {
+        eprintln!("no GPU here: skipping");
+        return;
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let cfg = Config {
+        distinct_ips: false,
+        ..Config::default()
+    };
+    tokio::spawn(coordinator::serve(listener, cfg, None));
+    let agent = Agent::connect(
+        Client::new(&url, None),
+        "gpu",
+        Duration::from_millis(100),
+        1,
+    )
+    .await
+    .unwrap();
+    tokio::spawn(agent.run());
+    let client = Client::new(&url, None);
+    assert_eq!(client.agents().await.unwrap()[0].caps.gpus.len(), 1);
+
+    let (first, count) = (1u32, 5000u32);
+    let spec = JobSpec {
+        module: client.put_blob(module("collatz_gpu")).await.unwrap(),
+        input: client.put_blob(u32s(&[first, count])).await.unwrap(),
+        fuel: 1_000_000_000,
+        memory_mb: 16,
+        replicas: 1,
+        gpu: true,
+    };
+    let job = client.submit(&spec).await.unwrap();
+    let view = client.wait(&job, Duration::from_secs(30)).await.unwrap();
+    let output = client.output(&view).await.unwrap();
+    let steps = |mut n: u32| {
+        let mut steps = 0;
+        while n > 1 && steps < 10_000 {
+            n = if n.is_multiple_of(2) {
+                n / 2
+            } else {
+                n.wrapping_mul(3).wrapping_add(1)
+            };
+            steps += 1;
+        }
+        steps
+    };
+    let expected: Vec<u32> = (first..first + count).map(steps).collect();
+    assert_eq!(output, u32s(&expected));
+    assert_eq!(expected[26], 111); // 27 takes 111 steps
+
+    // Without `gpu: true` the same module is refused, the same way on every device.
+    let job = client
+        .submit(&JobSpec { gpu: false, ..spec })
+        .await
+        .unwrap();
+    let view = client.wait(&job, Duration::from_secs(30)).await.unwrap();
+    assert!(matches!(
+        view.outcome,
+        Some(meshpool::proto::Outcome::Failed {
+            kind: FailKind::InvalidModule,
+            ..
+        })
+    ));
 }

@@ -61,7 +61,7 @@ fn local(n: u32) -> Result<()> {
         .map_err(|f| anyhow::anyhow!("{f:?}"))?;
     let start = Instant::now();
     let run = sandbox
-        .run(&compiled, n.to_le_bytes().to_vec(), u64::MAX, 16)
+        .run(&compiled, n.to_le_bytes().to_vec(), u64::MAX, 16, false)
         .map_err(|f| anyhow::anyhow!("{f:?}"))?;
     let wasm = start.elapsed();
     ensure!(run.output == expected.to_le_bytes(), "wrong count");
@@ -140,6 +140,7 @@ async fn main() -> Result<()> {
             fuel: u64::MAX / 2,
             memory_mb: (2 * args.mb as u32 + 4).max(16),
             replicas: args.replicas,
+            gpu: false,
         })
         .collect();
     let mut ids = Vec::new();
