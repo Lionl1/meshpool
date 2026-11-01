@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -109,6 +109,8 @@ struct Job {
     status: JobStatus,
     outcome: Option<Outcome>,
     error: Option<String>,
+    #[serde(with = "ago", default = "Instant::now")]
+    submitted: Instant,
     #[serde(with = "ago::option")]
     decided_at: Option<Instant>,
     tasks: Vec<String>,
@@ -326,6 +328,7 @@ impl Pool {
             status: JobStatus::Pending,
             outcome: None,
             error: None,
+            submitted: Instant::now(),
             decided_at: None,
             tasks: Vec::new(),
             assigned: HashSet::new(),
@@ -629,6 +632,17 @@ impl Pool {
         })
     }
 
+    /// The most recently submitted jobs, newest first.
+    pub fn recent_jobs(&self, limit: usize) -> Vec<JobView> {
+        let mut ids: Vec<(&String, Instant)> =
+            self.jobs.iter().map(|(id, j)| (id, j.submitted)).collect();
+        ids.sort_by_key(|a| std::cmp::Reverse(a.1));
+        ids.iter()
+            .take(limit)
+            .filter_map(|(id, _)| self.job(id))
+            .collect()
+    }
+
     fn decided_signal(&self, id: &str) -> Option<Arc<Notify>> {
         self.jobs.get(id).map(|j| j.decided.clone())
     }
@@ -819,6 +833,25 @@ async fn get_job(
             return Ok(Json(view));
         }
     }
+}
+
+#[derive(Deserialize)]
+struct Recent {
+    limit: Option<usize>,
+}
+
+async fn list_jobs(
+    State(s): App,
+    headers: HeaderMap,
+    Query(q): Query<Recent>,
+) -> Result<Json<Vec<JobView>>, ApiError> {
+    s.check(&headers, Side::Client)?;
+    Ok(Json(s.pool().recent_jobs(q.limit.unwrap_or(100).min(1000))))
+}
+
+/// The web UI: one static page talking to the API with the client token the user enters.
+async fn ui() -> Html<&'static str> {
+    Html(include_str!("ui.html"))
 }
 
 async fn list_agents(State(s): App, headers: HeaderMap) -> Result<Json<Vec<AgentView>>, ApiError> {
@@ -1025,7 +1058,8 @@ fn app(cfg: Config) -> anyhow::Result<(Router, Background, Option<Saver>)> {
     let router = Router::new()
         .route("/v1/blobs", post(put_blob))
         .route("/v1/blobs/{hash}", get(get_blob))
-        .route("/v1/jobs", post(submit))
+        .route("/", get(ui))
+        .route("/v1/jobs", get(list_jobs).post(submit))
         .route("/v1/jobs/batch", post(submit_batch))
         .route("/v1/jobs/{id}", get(get_job))
         .route("/v1/agents", get(list_agents).post(register))

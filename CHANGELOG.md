@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Web UI at `/` on the coordinator: devices, the latest jobs and their outputs, a form to
+  submit a module and input. `GET /v1/jobs?limit=N` lists the latest jobs (newest first,
+  client token), `Client::jobs` in Rust.
 - Field tests: `meshpool check` runs jobs with known answers on a live pool, fails on a
   wrong agreed answer and reports per device what it ran; `scripts/field-test.sh` starts a
   pool with HTTPS, tokens and saved state and prints how devices join; `deploy/netsim`

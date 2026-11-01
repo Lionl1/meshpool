@@ -211,6 +211,11 @@ impl Client {
         }
     }
 
+    /// The most recently submitted jobs, newest first.
+    pub async fn jobs(&self, limit: usize) -> Result<Vec<JobView>> {
+        Self::json(self.req(reqwest::Method::GET, &format!("/v1/jobs?limit={limit}"))).await
+    }
+
     pub async fn agents(&self) -> Result<Vec<AgentView>> {
         Self::json(self.req(reqwest::Method::GET, "/v1/agents")).await
     }
