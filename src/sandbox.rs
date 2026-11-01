@@ -2,6 +2,8 @@
 //!
 //! Host ABI (module "env"): `input_len() -> i32`, `read_input(ptr)` copies the input to
 //! `ptr`, `write_output(ptr, len)` sets the result. The module exports `memory` and `run`.
+//! Jobs submitted with `gpu: true` may also call `gpu_run(shader_ptr, shader_len, data_ptr,
+//! data_len, x, y, z)`: see `crate::gpu` (devices built with the `gpu` feature).
 //! No other host access exists: no files, network, clock or randomness.
 //!
 //! Only what the task itself determines is a vote (`Failed`): every honest device gets the
@@ -13,16 +15,25 @@ use wasmtime::{
     StoreLimitsBuilder, Trap,
 };
 
+use std::sync::Arc;
+
 use crate::proto::FailKind;
+
+#[cfg(feature = "gpu")]
+type GpuHandle = Arc<crate::gpu::Gpu>;
+/// Without the `gpu` feature there is never a GPU.
+#[cfg(not(feature = "gpu"))]
+type GpuHandle = Arc<std::convert::Infallible>;
 
 pub const MAX_OUTPUT: usize = 64 << 20;
 /// Tables live outside linear memory: cap them, or a task could exhaust the host.
 pub const MAX_TABLE_ELEMENTS: usize = 1 << 20;
-const IMPORTS: [&str; 3] = ["input_len", "read_input", "write_output"];
+const IMPORTS: [&str; 4] = ["input_len", "read_input", "write_output", "gpu_run"];
 
 pub struct Sandbox {
     engine: Engine,
     linker: Linker<Ctx>,
+    gpu: Option<GpuHandle>,
 }
 
 struct Ctx {
@@ -31,6 +42,8 @@ struct Ctx {
     /// Set by host functions when the task broke the ABI (a deterministic failure).
     guest_error: Option<FailKind>,
     limits: StoreLimits,
+    #[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+    gpu: Option<GpuHandle>,
 }
 
 #[derive(Debug)]
@@ -68,6 +81,73 @@ fn memory(caller: &mut Caller<'_, Ctx>) -> wasmtime::Result<wasmtime::Memory> {
     match caller.get_export("memory").and_then(|e| e.into_memory()) {
         Some(memory) => Ok(memory),
         None => Err(guest_error(caller, FailKind::InvalidModule, "no memory")),
+    }
+}
+
+/// `env.gpu_run`: every failure the task causes is a deterministic trap; a failing GPU is
+/// a host error (the task goes elsewhere).
+#[allow(clippy::too_many_arguments)]
+fn gpu_run(
+    mut c: Caller<'_, Ctx>,
+    shader_ptr: i32,
+    shader_len: i32,
+    data_ptr: i32,
+    data_len: i32,
+    x: i32,
+    y: i32,
+    z: i32,
+) -> wasmtime::Result<()> {
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = (&mut c, shader_ptr, shader_len, data_ptr, data_len, x, y, z);
+        Err(Error::msg("this device has no GPU"))
+    }
+    #[cfg(feature = "gpu")]
+    {
+        use crate::gpu::{GpuError, check, check_args};
+        let Some(gpu) = c.data().gpu.clone() else {
+            return Err(Error::msg("this device has no GPU"));
+        };
+        let mem = memory(&mut c)?;
+        let range = |ptr: i32, len: i32| {
+            let start = ptr as u32 as usize;
+            start..start + len as u32 as usize
+        };
+        let (shader, data_range) = (range(shader_ptr, shader_len), range(data_ptr, data_len));
+        let source = match mem.data(&c).get(shader).map(std::str::from_utf8) {
+            Some(Ok(source)) => source.to_string(),
+            Some(Err(_)) => return Err(guest_error(&mut c, FailKind::Trap, "shader is not UTF-8")),
+            None => return Err(guest_error(&mut c, FailKind::Trap, "gpu_run out of bounds")),
+        };
+        let groups = [x as u32, y as u32, z as u32];
+        let shader =
+            match check(&source).and_then(|s| check_args(data_range.len(), groups).map(|_| s)) {
+                Ok(shader) => shader,
+                Err(e) => return Err(guest_error(&mut c, FailKind::Trap, &e)),
+            };
+        let cost = shader.fuel(data_range.len(), groups);
+        let left = c.get_fuel()?;
+        if cost > left {
+            c.set_fuel(0)?;
+            return Err(guest_error(
+                &mut c,
+                FailKind::OutOfFuel,
+                "out of fuel for gpu_run",
+            ));
+        }
+        c.set_fuel(left - cost)?;
+        let Some(data) = mem.data(&c).get(data_range.clone()) else {
+            return Err(guest_error(&mut c, FailKind::Trap, "gpu_run out of bounds"));
+        };
+        let mut data = data.to_vec();
+        match gpu.run(&shader, &mut data, groups) {
+            Ok(()) => {
+                mem.data_mut(&mut c)[data_range].copy_from_slice(&data);
+                Ok(())
+            }
+            Err(GpuError::Invalid(e)) => Err(guest_error(&mut c, FailKind::Trap, &e)),
+            Err(GpuError::Device(e)) => Err(Error::msg(format!("GPU failed: {e}"))),
+        }
     }
 }
 
@@ -131,9 +211,26 @@ impl Sandbox {
                         }
                     },
                 )
-            });
+            })
+            .and_then(|l| l.func_wrap("env", "gpu_run", gpu_run));
         defined.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(Sandbox { engine, linker })
+        #[cfg(feature = "gpu")]
+        let gpu = crate::gpu::Gpu::open().map(Arc::new);
+        #[cfg(not(feature = "gpu"))]
+        let gpu = None;
+        Ok(Sandbox {
+            engine,
+            linker,
+            gpu,
+        })
+    }
+
+    /// The GPU this device lends, if it was built with the `gpu` feature and has one.
+    pub fn gpu_name(&self) -> Option<String> {
+        #[cfg(feature = "gpu")]
+        return self.gpu.as_ref().map(|g| g.name().to_string());
+        #[cfg(not(feature = "gpu"))]
+        None
     }
 
     /// Compile and check a module against the ABI (binary format only: no text parser on
@@ -163,13 +260,25 @@ impl Sandbox {
         Ok(module)
     }
 
+    /// Run a task; `gpu` is the job's permission to call `gpu_run`.
     pub fn run(
         &self,
         module: &Module,
         input: Vec<u8>,
         fuel: u64,
         memory_mb: u32,
+        gpu: bool,
     ) -> Result<Run, RunError> {
+        if module.imports().any(|i| i.name() == "gpu_run") {
+            if !gpu {
+                return Err(invalid(
+                    "the module uses the GPU: submit the job with gpu: true",
+                ));
+            }
+            if self.gpu.is_none() {
+                return Err(RunError::Host("this device has no GPU".into()));
+            }
+        }
         let limits = StoreLimitsBuilder::new()
             .memory_size(memory_mb as usize * (1 << 20))
             .table_elements(MAX_TABLE_ELEMENTS)
@@ -182,6 +291,7 @@ impl Sandbox {
             output: None,
             guest_error: None,
             limits,
+            gpu: self.gpu.clone(),
         };
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|ctx| &mut ctx.limits);
@@ -228,7 +338,7 @@ mod tests {
     fn run(wat: &str, fuel: u64) -> Result<Run, RunError> {
         let sandbox = Sandbox::new().unwrap();
         let module = sandbox.compile(&wat::parse_str(wat).unwrap())?;
-        sandbox.run(&module, b"abc".to_vec(), fuel, 1)
+        sandbox.run(&module, b"abc".to_vec(), fuel, 1, false)
     }
 
     fn kind(result: Result<Run, RunError>) -> FailKind {

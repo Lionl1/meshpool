@@ -50,21 +50,28 @@ impl Agent {
         heartbeat: Duration,
         slots: u32,
     ) -> Result<Arc<Self>> {
+        let sandbox = tokio::task::spawn_blocking(Sandbox::new).await??;
         let caps = Caps {
             slots: slots.max(1),
+            gpus: sandbox.gpu_name().into_iter().collect(),
             ..Caps::detect()
         };
         let auth = client.register(name, caps.clone()).await?;
         eprintln!(
-            "[*] joined the pool as {} ({name}, {} slots)",
-            auth.id, caps.slots
+            "[*] joined the pool as {} ({name}, {} slots{})",
+            auth.id,
+            caps.slots,
+            caps.gpus
+                .first()
+                .map(|g| format!(", GPU {g}"))
+                .unwrap_or_default()
         );
         Ok(Arc::new(Agent {
             client,
             name: name.into(),
             caps,
             heartbeat,
-            sandbox: Sandbox::new()?,
+            sandbox,
             modules: Mutex::default(),
             inputs: Mutex::default(),
             auth: tokio::sync::Mutex::new(auth),
@@ -190,10 +197,11 @@ impl Agent {
             Err(e) => return Ok(Err(e)),
         };
         let input = Arc::unwrap_or_clone(input);
-        let (fuel, memory_mb) = (spec.fuel, spec.memory_mb);
+        let (fuel, memory_mb, gpu) = (spec.fuel, spec.memory_mb, spec.gpu);
         let this = self.clone();
-        let run =
-            tokio::task::spawn_blocking(move || this.sandbox.run(&module, input, fuel, memory_mb));
+        let run = tokio::task::spawn_blocking(move || {
+            this.sandbox.run(&module, input, fuel, memory_mb, gpu)
+        });
         Ok(run.await?)
     }
 

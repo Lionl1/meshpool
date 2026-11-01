@@ -89,10 +89,12 @@ only that job's decision wakes the request.
 1. **Core (this phase):** coordinator, agent, WASM CPU sandbox, replicas and quorum, strikes,
    credits, tokens, CLI, tests with cheating and vanishing devices, benchmarks against
    existing systems.
-2. **GPU for untrusted devices:** a WebGPU host API (wgpu → Metal / Vulkan / DX12) so a WASM
-   task can dispatch WGSL compute shaders. Shaders are validated (naga) and can touch only
-   their own buffers. GPU floats are not bitwise reproducible across vendors, so GPU jobs vote
-   with a tolerance or on integer results.
+2. **GPU for untrusted devices (integer compute done):** `env.gpu_run` dispatches a WGSL
+   compute shader over one storage buffer through wgpu (Metal / Vulkan / DX12), on devices
+   built with `--features gpu`; jobs say `gpu: true` and go only to such devices. Shaders are
+   validated by naga, run with bounds checks and bounded loops, and may use integers and
+   booleans only, so replicas on different GPUs agree bit for bit. Next: several buffers,
+   floats with tolerance voting, GPU time limits.
 3. **Trusted pools:** native containers / CUDA on devices whose owner opts in, for workloads
    WASM cannot express (PyTorch, distllm stages).
 4. **Data plane:** large blobs peer-to-peer (QUIC, NAT hole punching) with the coordinator

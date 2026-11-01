@@ -10,8 +10,8 @@ of work. Anyone can lend a device; nobody has to trust the devices:
 - devices only make **outbound** HTTP requests, so they work behind any NAT or firewall;
 - devices earn **credits** in fuel, a deterministic and verifiable unit of work.
 
-Status: early (phase 1 of [the roadmap](docs/architecture.md#roadmap)). CPU tasks work;
-GPU via WebGPU is next.
+Status: early (phases 1–2 of [the roadmap](docs/architecture.md#roadmap)): CPU tasks, and
+integer GPU compute via WebGPU.
 
 ## Quick start
 
@@ -89,8 +89,30 @@ deterministic (replicas compare outputs bit for bit): iterate `BTreeMap`s rather
 `HashMap`s and derive any randomness from the input; floats are fine. Examples:
 [primes, word count (JSON), Mandelbrot strips](sdk/rust/examples).
 
-Under the hood a task is a WASM module exporting `memory` and `run()`, with three host
-functions in module `env`: `input_len() -> i32`, `read_input(ptr)`, `write_output(ptr, len)`.
+### GPU tasks
+
+A task can run WGSL compute shaders on the device's GPU (WebGPU: Metal, Vulkan, DX12):
+
+```rust
+meshpool_task::gpu_run(SHADER, &mut data, [groups, 1, 1]); // data: the shader's storage buffer
+```
+
+```bash
+cargo build --release --features gpu                     # devices that lend their GPU
+meshpool agent                                           # "GPU Apple M1 (Metal)" when found
+meshpool submit collatz_gpu.wasm --gpu --input-file numbers.bin
+```
+
+Jobs submitted with `--gpu` (`gpu: true`) go only to devices that lend a GPU. So that
+replicas on different GPUs agree bit for bit, shaders may use **integers and booleans only**
+(naga checks this before running; floats differ between vendors and drivers). Shaders run
+with bounds checks and bounded loops and touch only their own buffer; their fuel cost
+follows from the data size and the number of invocations. Example:
+[Collatz steps](sdk/rust/examples/collatz_gpu.rs).
+
+Under the hood a task is a WASM module exporting `memory` and `run()`, with host
+functions in module `env`: `input_len() -> i32`, `read_input(ptr)`, `write_output(ptr, len)`
+and, for GPU jobs, `gpu_run(shader_ptr, shader_len, data_ptr, data_len, x, y, z)`.
 Any language that compiles to `wasm32` can implement it; see the hand-written
 [examples/tasks](examples/tasks).
 

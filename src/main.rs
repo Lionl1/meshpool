@@ -87,6 +87,9 @@ enum Command {
         fuel: u64,
         #[arg(long, default_value_t = 64)]
         memory_mb: u32,
+        /// The task calls `gpu_run`: run it only on devices that lend a GPU.
+        #[arg(long)]
+        gpu: bool,
         /// Print the job id and return instead of waiting.
         #[arg(long)]
         detach: bool,
@@ -209,6 +212,7 @@ async fn main() -> Result<()> {
             memory_mb,
             detach,
             token,
+            gpu,
         } => {
             let client = client(token)?;
             let input = match input_file {
@@ -221,6 +225,7 @@ async fn main() -> Result<()> {
                 fuel,
                 memory_mb,
                 replicas,
+                gpu,
             };
             let id = client.submit(&spec).await?;
             if detach {

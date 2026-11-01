@@ -31,3 +31,8 @@ required-features = ["json"]
 name = "mandelbrot"
 crate-type = ["cdylib"]
 test = true
+
+[[example]]
+name = "collatz_gpu"
+crate-type = ["cdylib"]
+test = true

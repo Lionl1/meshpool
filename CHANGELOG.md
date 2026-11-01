@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- GPU tasks (feature `gpu`): `env.gpu_run` runs a WGSL compute shader on the device's GPU
+  through wgpu over one storage buffer. Shaders are checked by naga (integers and booleans
+  only, `@compute fn main`) and charged fuel by data size and invocations. `JobSpec.gpu`
+  (`--gpu`, Python `gpu=True`) sends a job only to devices that lend a GPU (`Caps.gpus`);
+  a module calling `gpu_run` in a job without it fails as an invalid module. Rust SDK:
+  `meshpool_task::gpu_run`, example `collatz_gpu`. Protocol 0.3.
 - Graceful shutdown: on Ctrl-C or SIGTERM the coordinator stops accepting, lets requests
   finish (open long polls are cut after `SHUTDOWN_GRACE`, 2 s) and saves its state one
   last time. Library: `coordinator::serve_until(listener, cfg, tls, shutdown)`.

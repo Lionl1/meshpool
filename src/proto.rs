@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 /// Bumped when agents and coordinators can no longer talk to each other. Fuel accounting
 /// depends on the wasmtime version, so it is part of it: replicas must count fuel alike.
-pub const PROTOCOL: &str = "meshpool/0.2+wasmtime50";
+pub const PROTOCOL: &str = "meshpool/0.3+wasmtime50";
 
 pub fn blob_hash(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
@@ -24,6 +24,9 @@ pub struct JobSpec {
     /// Devices that must run the task; a result needs ⌊R/2⌋+1 of them to agree.
     #[serde(default = "default_replicas")]
     pub replicas: u32,
+    /// The task may call `gpu_run`; only devices that lend a GPU take it.
+    #[serde(default)]
+    pub gpu: bool,
 }
 
 fn default_fuel() -> u64 {
