@@ -120,6 +120,8 @@ Any language that compiles to `wasm32` can implement it; see the hand-written
 
 - [Architecture, trust model, roadmap](docs/architecture.md)
 - [Benchmarks vs Ray and Dask](docs/benchmarks.md)
+- [Trying a pool on real devices and networks](docs/field-test.md): `meshpool check`,
+  `scripts/field-test.sh`, `deploy/netsim`
 - [Changelog](CHANGELOG.md)
 
 ## License

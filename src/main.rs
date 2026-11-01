@@ -96,6 +96,18 @@ enum Command {
         #[arg(long, env = "MESHPOOL_TOKEN")]
         token: Option<String>,
     },
+    /// Check a live pool: run jobs with known answers, verify them, show what each device did.
+    Check {
+        #[arg(long, default_value_t = 64)]
+        tasks: usize,
+        /// Each job counts the primes below n (+ its index); larger n, longer jobs.
+        #[arg(long, default_value_t = 1_000_000)]
+        n: u32,
+        #[arg(long, default_value_t = 2)]
+        replicas: u32,
+        #[arg(long, env = "MESHPOOL_TOKEN")]
+        token: Option<String>,
+    },
     /// Show a job.
     Job {
         id: String,
@@ -236,6 +248,16 @@ async fn main() -> Result<()> {
             let output = client.output(&view).await?;
             eprintln!("[v] job {id}: {} vote(s)", view.votes.len());
             std::io::stdout().write_all(&output)?;
+            Ok(())
+        }
+        Command::Check {
+            tasks,
+            n,
+            replicas,
+            token,
+        } => {
+            let report = meshpool::check::check(&client(token)?, tasks, n, replicas).await?;
+            print!("{report}");
             Ok(())
         }
         Command::Job { id, token } => {

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Field tests: `meshpool check` runs jobs with known answers on a live pool, fails on a
+  wrong agreed answer and reports per device what it ran; `scripts/field-test.sh` starts a
+  pool with HTTPS, tokens and saved state and prints how devices join; `deploy/netsim`
+  (Docker Compose, `tc netem`) puts devices on separate networks with their own latency and
+  loss. `docs/field-test.md`.
 - GPU tasks (feature `gpu`): `env.gpu_run` runs a WGSL compute shader on the device's GPU
   through wgpu over one storage buffer. Shaders are checked by naga (integers and booleans
   only, `@compute fn main`) and charged fuel by data size and invocations. `JobSpec.gpu`

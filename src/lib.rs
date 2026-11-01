@@ -1,6 +1,7 @@
 //! meshpool: pool the compute of untrusted devices. See docs/architecture.md.
 
 pub mod agent;
+pub mod check;
 pub mod client;
 pub mod coordinator;
 #[cfg(feature = "gpu")]
