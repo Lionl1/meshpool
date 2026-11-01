@@ -405,3 +405,23 @@ async fn check_verifies_a_live_pool() {
     let text = report.to_string();
     assert!(text.contains("every answer right") && text.contains(" a "));
 }
+
+#[tokio::test]
+async fn web_ui_and_job_list() {
+    let url = coordinator(fast()).await;
+    let page = reqwest::get(&url).await.unwrap().text().await.unwrap();
+    assert!(page.contains("<title>meshpool</title>"));
+    let client = Client::new(&url, None);
+    let first = submit(&client, "reverse.wat", b"a", 1, 1_000_000).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let second = submit(&client, "reverse.wat", b"b", 1, 1_000_000).await;
+    let ids: Vec<String> = client
+        .jobs(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|j| j.id)
+        .collect();
+    assert_eq!(ids, [second.clone(), first]);
+    assert_eq!(client.jobs(1).await.unwrap()[0].id, second);
+}

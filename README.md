@@ -29,6 +29,10 @@ Tokens: `MESHPOOL_TOKEN` for clients, `MESHPOOL_AGENT_TOKEN` to restrict who may
 Replicas of a job go to devices with distinct IP addresses; to try a pool on one machine,
 start the coordinator with `--allow-same-ip`.
 
+The coordinator also serves a web page at its address (`http://127.0.0.1:7700/`): devices,
+recent jobs with their results, and a form to submit a `.wasm` module. Enter the client
+token there if the pool has one.
+
 From Python, with the [client](sdk/python) (standard library only):
 
 ```python

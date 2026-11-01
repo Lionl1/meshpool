@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meshpool</title>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6e6e73; --line: #e2e2e5; --card: #fff;
+          --ok: #1a7f37; --bad: #c62828; --wait: #9a6700; --accent: #2457d6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececee; --muted: #9a9aa0; --line: #2e2e33; --card: #1e1e21;
+            --ok: #4cc26a; --bad: #ef6a6a; --wait: #d6a531; --accent: #7aa2ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 system-ui, -apple-system, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+            padding: 12px; margin-bottom: 16px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  code, .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  input, button { font: inherit; color: inherit; background: var(--bg);
+                  border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
+  label input[type=number] { width: 7em; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .wait { color: var(--wait); }
+  .muted { color: var(--muted); }
+  #status { margin-left: auto; }
+  pre { white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; }
+  tr.job { cursor: pointer; }
+  tr.job:hover td { background: var(--bg); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>meshpool</h1>
+    <input id="token" type="password" placeholder="client token (if the pool has one)" size="30">
+    <span id="status" class="muted"></span>
+  </header>
+
+  <section>
+    <h2>Submit a job</h2>
+    <form id="submit">
+      <label>WebAssembly module (.wasm)<input id="module" type="file" accept=".wasm" required></label>
+      <label>Input (text)<input id="input" placeholder="task input" size="24"></label>
+      <label>Replicas<input id="replicas" type="number" min="1" value="2"></label>
+      <label>Fuel<input id="fuel" type="number" min="1" value="10000000000"></label>
+      <label>Memory, MB<input id="memory" type="number" min="1" value="64"></label>
+      <label><span>GPU</span><input id="gpu" type="checkbox"></label>
+      <button class="primary">Submit</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Devices <span id="agents-count" class="muted"></span></h2>
+    <table>
+      <thead><tr><th>Name</th><th>State</th><th>OS / arch</th><th>CPUs</th><th>Slots</th>
+        <th>GPU</th><th>Credits</th><th>Strikes</th><th>Id</th></tr></thead>
+      <tbody id="agents"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Jobs <span class="muted">(newest first, click for the result)</span></h2>
+    <table>
+      <thead><tr><th>Id</th><th>Status</th><th>Replicas</th><th>Votes</th><th>GPU</th><th>Result</th></tr></thead>
+      <tbody id="jobs"></tbody>
+    </table>
+    <pre id="output" class="mono"></pre>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const token = $("token");
+try { token.value = localStorage.getItem("meshpool-token") || ""; } catch {}
+token.addEventListener("change", () => {
+  try { localStorage.setItem("meshpool-token", token.value); } catch {}
+  refresh();
+});
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers);
+  if (token.value) headers.authorization = "Bearer " + token.value;
+  const r = await fetch(path, Object.assign({}, opts, { headers }));
+  if (!r.ok) throw new Error(r.status + " " + (await r.text()));
+  return r;
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const cls = { done: "ok", failed: "bad", pending: "wait", online: "ok", offline: "muted", banned: "bad" };
+
+function outcomeText(job) {
+  const o = job.outcome;
+  if (!o) return job.error ? esc(job.error) : "";
+  if (o.status === "ok") return "output <code>" + o.output.slice(0, 12) + "…</code>, fuel " + o.fuel_used;
+  if (o.status === "failed") return esc(o.kind + ": " + o.detail);
+  return esc(o.status);
+}
+
+async function refresh() {
+  try {
+    const [agents, jobs] = await Promise.all([
+      api("/v1/agents").then((r) => r.json()),
+      api("/v1/jobs?limit=50").then((r) => r.json()),
+    ]);
+    $("agents-count").textContent = "(" + agents.filter((a) => a.online && !a.banned).length + " online)";
+    $("agents").innerHTML = agents.map((a) => {
+      const state = a.banned ? "banned" : a.online ? "online" : "offline";
+      return `<tr><td>${esc(a.name)}</td><td class="${cls[state]}">${state}</td>
+        <td>${esc(a.caps.os)}/${esc(a.caps.arch)}</td><td>${a.caps.cpus}</td><td>${a.caps.slots}</td>
+        <td>${esc(a.caps.gpus[0] || "")}</td><td>${a.credits}</td><td>${a.strikes}</td>
+        <td class="mono muted">${esc(a.id)}</td></tr>`;
+    }).join("") || `<tr><td colspan="9" class="muted">No devices yet: run <code>meshpool agent</code> on one.</td></tr>`;
+    $("jobs").innerHTML = jobs.map((j) => `<tr class="job" data-id="${esc(j.id)}">
+        <td class="mono">${esc(j.id.slice(0, 12))}</td><td class="${cls[j.status]}">${j.status}</td>
+        <td>${j.spec.replicas}</td><td>${j.votes.length}</td><td>${j.spec.gpu ? "yes" : ""}</td>
+        <td>${outcomeText(j)}</td></tr>`).join("")
+      || `<tr><td colspan="6" class="muted">No jobs yet.</td></tr>`;
+    $("status").textContent = "updated " + new Date().toLocaleTimeString();
+    $("status").className = "muted";
+  } catch (e) {
+    $("status").textContent = e.message.startsWith("401") ? "wrong or missing token" : e.message;
+    $("status").className = "bad";
+  }
+}
+
+$("jobs").addEventListener("click", async (ev) => {
+  const row = ev.target.closest("tr.job");
+  if (!row) return;
+  const out = $("output");
+  try {
+    const job = await api("/v1/jobs/" + row.dataset.id).then((r) => r.json());
+    if (job.outcome && job.outcome.status === "ok") {
+      const bytes = new Uint8Array(await api("/v1/blobs/" + job.outcome.output).then((r) => r.arrayBuffer()));
+      let text;
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+      catch { text = "hex: " + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(""); }
+      out.textContent = `job ${job.id}\n${bytes.length} bytes:\n${text}`;
+    } else {
+      out.textContent = JSON.stringify(job, null, 2);
+    }
+  } catch (e) { out.textContent = e.message; }
+});
+
+$("submit").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const btn = ev.submitter;
+  btn.disabled = true;
+  try {
+    const upload = async (body) => (await api("/v1/blobs", { method: "POST", body }).then((r) => r.json())).id;
+    const spec = {
+      module: await upload(await $("module").files[0].arrayBuffer()),
+      input: await upload(new TextEncoder().encode($("input").value)),
+      replicas: +$("replicas").value, fuel: +$("fuel").value,
+      memory_mb: +$("memory").value, gpu: $("gpu").checked,
+    };
+    const { id } = await api("/v1/jobs", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(spec),
+    }).then((r) => r.json());
+    $("output").textContent = "submitted job " + id;
+    refresh();
+  } catch (e) {
+    $("output").textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
