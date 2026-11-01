@@ -281,3 +281,111 @@ async fn pool_over_tls() {
     // Without the pool's certificate the connection is refused, not downgraded.
     assert!(client(None).agents().await.is_err());
 }
+
+#[tokio::test]
+async fn pool_survives_a_coordinator_restart() {
+    let dir = std::env::temp_dir().join(format!("meshpool-{}", uuid::Uuid::new_v4()));
+    let cfg = Config {
+        data_dir: Some(dir.clone()),
+        ..fast()
+    };
+    let start = |cfg: Config| async move {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        (url, tokio::spawn(coordinator::serve(listener, cfg, None)))
+    };
+
+    // Before: one job done, one waiting for devices that are gone.
+    let (url, first) = start(cfg.clone()).await;
+    let mut agents = Vec::new();
+    for name in ["a", "b"] {
+        let agent = Agent::connect(Client::new(&url, None), name, Duration::from_millis(100), 1)
+            .await
+            .unwrap();
+        agents.push(tokio::spawn(agent.run()));
+    }
+    let client = Client::new(&url, None);
+    let done = submit(&client, "reverse.wat", b"kept", 2, 1_000_000).await;
+    client.wait(&done, WAIT).await.unwrap();
+    for agent in agents {
+        agent.abort();
+    }
+    let waiting = submit(&client, "reverse.wat", b"later", 2, 1_000_000).await;
+    tokio::time::sleep(coordinator::SAVE_EVERY * 2).await;
+    first.abort();
+    let _ = first.await;
+
+    // After: the same data directory on a new address.
+    let (url, _second) = start(cfg).await;
+    let client = Client::new(&url, None);
+    let view = client.job(&done, Duration::ZERO).await.unwrap();
+    assert_eq!(client.output(&view).await.unwrap(), b"tpek");
+    assert!(client.agents().await.unwrap().iter().all(|a| a.credits > 0));
+    for name in ["c", "d"] {
+        honest_agent(&url, name).await;
+    }
+    let view = client.wait(&waiting, WAIT).await.unwrap();
+    assert_eq!(client.output(&view).await.unwrap(), b"retal");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A coordinator stopped by `stop` (and the oneshot that stops it).
+async fn stoppable(
+    cfg: Config,
+) -> (
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<anyhow::Result<()>>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(coordinator::serve_until(listener, cfg, None, async move {
+        let _ = stopped.await;
+    }));
+    (url, stop, server)
+}
+
+#[tokio::test]
+async fn shutdown_saves_the_last_changes() {
+    let dir = std::env::temp_dir().join(format!("meshpool-{}", uuid::Uuid::new_v4()));
+    let cfg = Config {
+        data_dir: Some(dir.clone()),
+        ..fast()
+    };
+    let started = std::time::Instant::now();
+    let (url, stop, server) = stoppable(cfg.clone()).await;
+    let job = submit(
+        &Client::new(&url, None),
+        "reverse.wat",
+        b"last",
+        1,
+        1_000_000,
+    )
+    .await;
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    // Stopped before the first periodic save: only the final one can have kept the job.
+    assert!(started.elapsed() < coordinator::SAVE_EVERY);
+
+    let (url, _stop, _server) = stoppable(cfg).await;
+    honest_agent(&url, "after").await;
+    let client = Client::new(&url, None);
+    let view = client.wait(&job, WAIT).await.unwrap();
+    assert_eq!(client.output(&view).await.unwrap(), b"tsal");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn open_long_polls_do_not_hold_up_shutdown() {
+    let (url, stop, server) = stoppable(fast()).await;
+    let client = Client::new(&url, None);
+    let auth = client.register("idle", Caps::default()).await.unwrap();
+    let poll = tokio::spawn(async move { client.lease(&auth, Duration::from_secs(60), 1).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let started = std::time::Instant::now();
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    assert!(started.elapsed() < coordinator::SHUTDOWN_GRACE + Duration::from_secs(1));
+    poll.abort();
+}

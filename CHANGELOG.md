@@ -8,6 +8,13 @@
   (`--gpu`, Python `gpu=True`) sends a job only to devices that lend a GPU (`Caps.gpus`);
   a module calling `gpu_run` in a job without it fails as an invalid module. Rust SDK:
   `meshpool_task::gpu_run`, example `collatz_gpu`. Protocol 0.3.
+- Graceful shutdown: on Ctrl-C or SIGTERM the coordinator stops accepting, lets requests
+  finish (open long polls are cut after `SHUTDOWN_GRACE`, 2 s) and saves its state one
+  last time. Library: `coordinator::serve_until(listener, cfg, tls, shutdown)`.
+- Persistence: `meshpool coordinator --data-dir` saves the pool (devices, credits, strikes,
+  jobs, tasks, queue) to `state.json` and blobs to `blobs/<sha256>` every second, written
+  atomically, blobs before the state referring to them; reloaded on start. Leases survive a
+  restart. Background tasks stop with the server.
 - Rust task SDK (`sdk/rust`, crate `meshpool-task`): `task!` turns `fn(&[u8]) -> impl
   AsRef<[u8]>` into a task, `task_json!` does the same for serde types. Examples: primes,
   word count, Mandelbrot strips; tests build them to wasm32 and run them in a pool.

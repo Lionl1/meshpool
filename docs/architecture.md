@@ -47,7 +47,9 @@ nobody is blamed.
 ```
 
 - **Coordinator** (`src/coordinator.rs`): job queue, task leases, quorum, strikes and
-  credits, content-addressed blob store (SHA-256). One process with state in memory for now.
+  credits, content-addressed blob store (SHA-256). One process; with `--data-dir` its state (`state.json`) and blobs (`blobs/<sha256>`)
+  are saved every second and reloaded on start (`src/store.rs`). Leases survive a restart:
+  devices that keep running their tasks report to the restarted coordinator.
 - **Agent** (`src/agent.rs`): registers the device and its capabilities, runs `slots`
   tasks at once (one per core by default), leases as many tasks as it has free slots in one
   long-poll, fetches module and input by hash (verified; modules and small inputs cached),
@@ -97,7 +99,7 @@ only that job's decision wakes the request.
    WASM cannot express (PyTorch, distllm stages).
 4. **Data plane:** large blobs peer-to-peer (QUIC, NAT hole punching) with the coordinator
    as fallback relay; locality-aware scheduling.
-5. **Scale and economy:** persistent state, several coordinators, reputation-weighted and
+5. **Scale and economy:** several coordinators, reputation-weighted and
    randomised assignment, credit accounting between owners.
 6. **SDKs and devices:** Python and Rust SDKs (`map`, DAGs), agents for Windows services,
    Android/iOS (the WASM tasks run unchanged).
