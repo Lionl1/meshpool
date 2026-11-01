@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Graceful shutdown: on Ctrl-C or SIGTERM the coordinator stops accepting, lets requests
+  finish (open long polls are cut after `SHUTDOWN_GRACE`, 2 s) and saves its state one
+  last time. Library: `coordinator::serve_until(listener, cfg, tls, shutdown)`.
 - Persistence: `meshpool coordinator --data-dir` saves the pool (devices, credits, strikes,
   jobs, tasks, queue) to `state.json` and blobs to `blobs/<sha256>` every second, written
   atomically, blobs before the state referring to them; reloaded on start. Leases survive a

@@ -44,7 +44,9 @@ meshpool coordinator --data-dir /var/lib/meshpool     # or MESHPOOL_DATA_DIR
 ```
 
 Devices, credits, strikes, jobs and blobs are saved every second and reloaded on start, so
-a restart loses at most the last second; running tasks keep their leases. Without
+a crash loses at most the last second, and a stop with Ctrl-C or SIGTERM (`docker stop`,
+systemd) loses nothing: the coordinator finishes open requests (at most 2 s) and saves
+once more. Running tasks keep their leases. Without
 `--data-dir` the pool lives in memory.
 
 ### HTTPS

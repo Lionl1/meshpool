@@ -901,19 +901,68 @@ pub struct Tls {
 /// Serve the API on `listener`: plain HTTP, or HTTPS with `tls`. Without TLS, agent
 /// secrets and client tokens cross the network readable; put a TLS proxy in front then.
 pub async fn serve(listener: TcpListener, cfg: Config, tls: Option<Tls>) -> anyhow::Result<()> {
-    let (app, _background) = app(cfg)?;
+    serve_until(listener, cfg, tls, std::future::pending()).await
+}
+
+/// Requests still open this long after `shutdown` (long polls) are cut off.
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
+/// `serve` until `shutdown` completes: stop accepting, let requests finish (at most
+/// `SHUTDOWN_GRACE`), then save the state one last time.
+pub async fn serve_until(
+    listener: TcpListener,
+    cfg: Config,
+    tls: Option<Tls>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> anyhow::Result<()> {
+    let (app, background, saver) = app(cfg)?;
     let service = app.into_make_service_with_connect_info::<SocketAddr>();
-    match tls {
-        None => axum::serve(listener, service).await?,
-        Some(tls) => {
-            let config =
-                axum_server::tls_rustls::RustlsConfig::from_pem(tls.cert_pem, tls.key_pem).await?;
-            axum_server::from_tcp_rustls(listener.into_std()?, config)?
-                .serve(service)
-                .await?
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        shutdown.await;
+        let _ = stop.send(true);
+    });
+    let signal = |mut rx: tokio::sync::watch::Receiver<bool>| async move {
+        let _ = rx.wait_for(|stop| *stop).await;
+    };
+    let server = async {
+        match tls {
+            None => {
+                axum::serve(listener, service)
+                    .with_graceful_shutdown(signal(stopped.clone()))
+                    .await?
+            }
+            Some(tls) => {
+                let config =
+                    axum_server::tls_rustls::RustlsConfig::from_pem(tls.cert_pem, tls.key_pem)
+                        .await?;
+                let handle = axum_server::Handle::new();
+                let on_stop = (handle.clone(), signal(stopped.clone()));
+                tokio::spawn(async move {
+                    on_stop.1.await;
+                    on_stop.0.graceful_shutdown(Some(SHUTDOWN_GRACE));
+                });
+                axum_server::from_tcp_rustls(listener.into_std()?, config)?
+                    .handle(handle)
+                    .serve(service)
+                    .await?
+            }
         }
+        anyhow::Ok(())
+    };
+    let cut_off = async {
+        signal(stopped.clone()).await;
+        tokio::time::sleep(SHUTDOWN_GRACE).await;
+    };
+    let result = tokio::select! {
+        result = server => result,
+        _ = cut_off => Ok(()),
+    };
+    drop(background);
+    if let Some((shared, store)) = saver {
+        save(&shared, &store).await;
     }
-    Ok(())
+    result
 }
 
 /// How often the state is saved to `data_dir`: a crash loses at most this much work.
@@ -931,7 +980,9 @@ impl Drop for Background {
     }
 }
 
-fn app(cfg: Config) -> anyhow::Result<(Router, Background)> {
+type Saver = (Arc<Shared>, Arc<Mutex<Store>>);
+
+fn app(cfg: Config) -> anyhow::Result<(Router, Background, Option<Saver>)> {
     let mut store = cfg.data_dir.as_deref().map(Store::open).transpose()?;
     let pool = match &mut store {
         None => Pool::new(&cfg),
@@ -949,10 +1000,14 @@ fn app(cfg: Config) -> anyhow::Result<(Router, Background)> {
         tasks_changed: Notify::new(),
     });
     let mut background = Background(Vec::new());
-    if let Some(store) = store {
-        background
-            .0
-            .push(tokio::spawn(save_loop(shared.clone(), store)));
+    let saver = store.map(|store| (shared.clone(), Arc::new(Mutex::new(store))));
+    if let Some((shared, store)) = saver.clone() {
+        background.0.push(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(SAVE_EVERY).await;
+                save(&shared, &store).await;
+            }
+        }));
     }
     let sweeper = shared.clone();
     background.0.push(tokio::spawn(async move {
@@ -977,38 +1032,28 @@ fn app(cfg: Config) -> anyhow::Result<(Router, Background)> {
         .route("/v1/agents/{id}/tasks/{task}/output", post(report_output))
         .layer(DefaultBodyLimit::max(MAX_BLOB))
         .with_state(shared);
-    Ok((router, background))
+    Ok((router, background, saver))
 }
 
-async fn save_loop(shared: Arc<Shared>, mut store: Store) {
-    loop {
-        tokio::time::sleep(SAVE_EVERY).await;
-        let snap = match shared.pool().snapshot() {
-            Ok(snap) => snap,
-            Err(e) => {
-                eprintln!("[!] saving state: {e}");
-                continue;
-            }
-        };
-        // Disk writes happen outside the pool lock.
-        let saved = tokio::task::spawn_blocking(move || {
-            let result = store.save(&snap);
-            (store, snap, result)
-        })
-        .await;
-        match saved {
-            Ok((back, snap, result)) => {
-                store = back;
-                if let Err(e) = result {
-                    eprintln!("[!] saving state: {e:#}");
-                    shared.pool().unsaved(snap); // try those blobs again next time
-                }
-            }
-            Err(e) => {
-                eprintln!("[!] saving state: {e}");
-                return;
-            }
+/// Write what changed since the last save; disk writes happen outside the pool lock.
+async fn save(shared: &Arc<Shared>, store: &Arc<Mutex<Store>>) {
+    let snap = match shared.pool().snapshot() {
+        Ok(snap) => snap,
+        Err(e) => return eprintln!("[!] saving state: {e}"),
+    };
+    let store = store.clone();
+    let saved = tokio::task::spawn_blocking(move || {
+        let result = store.lock().unwrap_or_else(|p| p.into_inner()).save(&snap);
+        (snap, result)
+    })
+    .await;
+    match saved {
+        Ok((_, Ok(()))) => {}
+        Ok((snap, Err(e))) => {
+            eprintln!("[!] saving state: {e:#}");
+            shared.pool().unsaved(snap); // try those blobs again next time
         }
+        Err(e) => eprintln!("[!] saving state: {e}"),
     }
 }
 

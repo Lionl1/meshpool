@@ -326,3 +326,64 @@ async fn pool_survives_a_coordinator_restart() {
     assert_eq!(client.output(&view).await.unwrap(), b"retal");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// A coordinator stopped by `stop` (and the oneshot that stops it).
+async fn stoppable(
+    cfg: Config,
+) -> (
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<anyhow::Result<()>>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(coordinator::serve_until(listener, cfg, None, async move {
+        let _ = stopped.await;
+    }));
+    (url, stop, server)
+}
+
+#[tokio::test]
+async fn shutdown_saves_the_last_changes() {
+    let dir = std::env::temp_dir().join(format!("meshpool-{}", uuid::Uuid::new_v4()));
+    let cfg = Config {
+        data_dir: Some(dir.clone()),
+        ..fast()
+    };
+    let started = std::time::Instant::now();
+    let (url, stop, server) = stoppable(cfg.clone()).await;
+    let job = submit(
+        &Client::new(&url, None),
+        "reverse.wat",
+        b"last",
+        1,
+        1_000_000,
+    )
+    .await;
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    // Stopped before the first periodic save: only the final one can have kept the job.
+    assert!(started.elapsed() < coordinator::SAVE_EVERY);
+
+    let (url, _stop, _server) = stoppable(cfg).await;
+    honest_agent(&url, "after").await;
+    let client = Client::new(&url, None);
+    let view = client.wait(&job, WAIT).await.unwrap();
+    assert_eq!(client.output(&view).await.unwrap(), b"tsal");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn open_long_polls_do_not_hold_up_shutdown() {
+    let (url, stop, server) = stoppable(fast()).await;
+    let client = Client::new(&url, None);
+    let auth = client.register("idle", Caps::default()).await.unwrap();
+    let poll = tokio::spawn(async move { client.lease(&auth, Duration::from_secs(60), 1).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let started = std::time::Instant::now();
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    assert!(started.elapsed() < coordinator::SHUTDOWN_GRACE + Duration::from_secs(1));
+    poll.abort();
+}
