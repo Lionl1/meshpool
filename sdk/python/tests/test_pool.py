@@ -83,7 +83,9 @@ class TlsTest(unittest.TestCase):
                  "-pkeyopt", "ec_paramgen_curve:P-256", "-pkeyopt", "ec_param_enc:named_curve",
                  "-nodes", "-days", "1", "-subj", "/CN=localhost", "-keyout", key, "-out", cert,
                  "-addext", "subjectAltName=DNS:localhost",
-                 "-addext", "extendedKeyUsage=serverAuth"],
+                 "-addext", "extendedKeyUsage=serverAuth",
+                 # OpenSSL 3 marks it a CA otherwise; webpki (Linux) refuses that as a server's.
+                 "-addext", "basicConstraints=critical,CA:FALSE"],
                 check=True, capture_output=True)
             port = free_port()
             url = f"https://localhost:{port}"

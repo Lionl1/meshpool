@@ -61,7 +61,8 @@ API over HTTPS: with a real certificate, a TLS proxy, or a self-signed one:
 ```bash
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve \
   -nodes -days 365 -subj /CN=pool.example -keyout key.pem -out cert.pem \
-  -addext subjectAltName=DNS:pool.example -addext extendedKeyUsage=serverAuth
+  -addext subjectAltName=DNS:pool.example -addext extendedKeyUsage=serverAuth \
+  -addext basicConstraints=critical,CA:FALSE
 meshpool coordinator --listen 0.0.0.0:7700 --tls-cert cert.pem --tls-key key.pem
 meshpool --url https://pool.example:7700 --ca-cert cert.pem agent   # or MESHPOOL_CA_CERT
 ```
