@@ -26,11 +26,13 @@ serve() {
   if [ ! -f "$FIELD_DIR/cert.pem" ]; then
     local san="DNS:$host"
     [[ $host =~ ^[0-9.]+$ || $host == *:* ]] && san="IP:$host"
-    # Named curve and serverAuth: what rustls requires (LibreSSL's defaults are not).
+    # Named curve, serverAuth and CA:FALSE: what rustls requires (LibreSSL's defaults are
+    # not; OpenSSL 3 marks the certificate a CA, which webpki refuses as a server's).
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
       -pkeyopt ec_param_enc:named_curve -nodes -days 30 -subj "/CN=$host" \
       -keyout "$FIELD_DIR/key.pem" -out "$FIELD_DIR/cert.pem" \
-      -addext "subjectAltName=$san" -addext extendedKeyUsage=serverAuth 2>/dev/null
+      -addext "subjectAltName=$san" -addext extendedKeyUsage=serverAuth \
+      -addext basicConstraints=critical,CA:FALSE 2>/dev/null
   fi
   if [ ! -f "$FIELD_DIR/env" ]; then
     cat >"$FIELD_DIR/env" <<ENV

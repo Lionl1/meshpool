@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Self-signed certificates from the README and `scripts/field-test.sh` now carry
+  `basicConstraints=CA:FALSE`: OpenSSL 3 marks them a CA by default, and rustls on Linux
+  (webpki) refuses a CA certificate as a server's, so devices could not join over HTTPS.
+- CI on GitHub Actions: fmt, clippy and tests on Linux, macOS and Windows; the Python
+  client's tests on Python 3.9.
 - Web UI at `/` on the coordinator: devices, the latest jobs and their outputs, a form to
   submit a module and input. `GET /v1/jobs?limit=N` lists the latest jobs (newest first,
   client token), `Client::jobs` in Rust.
