@@ -37,6 +37,16 @@ pool = Pool("http://coordinator:7700")
 outputs = pool.map(pool.upload("my_task.wasm"), [b"a", b"b", b"c"])
 ```
 
+### Keeping state across restarts
+
+```bash
+meshpool coordinator --data-dir /var/lib/meshpool     # or MESHPOOL_DATA_DIR
+```
+
+Devices, credits, strikes, jobs and blobs are saved every second and reloaded on start, so
+a restart loses at most the last second; running tasks keep their leases. Without
+`--data-dir` the pool lives in memory.
+
 ### HTTPS
 
 Device secrets and tokens travel with every request, so outside a trusted LAN serve the

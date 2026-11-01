@@ -49,6 +49,10 @@ enum Command {
         /// addresses (for a pool on one machine or one LAN behind a single address).
         #[arg(long)]
         allow_same_ip: bool,
+        /// Save the pool here (state.json and blobs/) and reload it on start; without it the
+        /// pool lives in memory only.
+        #[arg(long, env = "MESHPOOL_DATA_DIR")]
+        data_dir: Option<PathBuf>,
         /// Serve HTTPS with this certificate chain (PEM); needs --tls-key.
         #[arg(long, env = "MESHPOOL_TLS_CERT", requires = "tls_key")]
         tls_cert: Option<PathBuf>,
@@ -131,6 +135,7 @@ async fn main() -> Result<()> {
             allow_same_ip,
             tls_cert,
             tls_key,
+            data_dir,
         } => {
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             let addr = listener.local_addr()?;
@@ -160,6 +165,7 @@ async fn main() -> Result<()> {
                 agent_timeout: Duration::from_secs_f64(agent_timeout),
                 lease_timeout: Duration::from_secs_f64(lease_timeout),
                 distinct_ips: !allow_same_ip,
+                data_dir,
             };
             coordinator::serve(listener, cfg, tls).await
         }
