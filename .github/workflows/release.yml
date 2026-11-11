@@ -1,0 +1,50 @@
+name: Release
+# A tag vX.Y.Z builds the binaries for Linux, macOS and Windows and creates a GitHub release.
+# A change to this file builds the same archives without publishing them.
+on:
+  push:
+    tags: ["v*"]
+    branches: ["**"]
+    paths: [".github/workflows/release.yml"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux-x86_64, ext: "" }
+          - { os: ubuntu-24.04-arm, name: linux-aarch64, ext: "" }
+          - { os: macos-latest, name: macos-arm64, ext: "" }
+          - { os: windows-latest, name: windows-x86_64, ext: ".exe" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked 
+      - name: Package
+        shell: bash
+        run: |
+          mkdir dist
+          for bin in meshpool; do cp "target/release/$bin${{ matrix.ext }}" dist/; done
+          cp README.md LICENSE dist/
+          ./dist/meshpool${{ matrix.ext }} --version
+          tar -czf "meshpool-${GITHUB_REF_NAME//\//-}-${{ matrix.name }}.tar.gz" -C dist .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: meshpool-*.tar.gz
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - run: sha256sum meshpool-*.tar.gz > SHA256SUMS
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" meshpool-*.tar.gz SHA256SUMS --repo "${{ github.repository }}" --generate-notes
